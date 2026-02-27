@@ -1,0 +1,6 @@
+@Databot_HostAddress = http://localhost:5158
+
+GET {{Databot_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
