@@ -10,7 +10,18 @@ public sealed class SkPromptRunner(KernelFactory factory, IWebHostEnvironment en
     private readonly KernelFactory _kernelFactory = factory;
     private readonly IWebHostEnvironment _env = env;
 
-    public async Task<string> TuningQuestionAsync(string question, string environment, string servers, AgentSwitcher agentSwitcher,
+    /// <summary>
+    /// Tunes the raw question into a deterministic, execution-safe request string.
+    /// Output is a single line in the format:
+    ///   &lt;TUNED_QUESTION&gt;||&lt;ROUTED_QUERYCODE&gt;
+    /// Or if irrelevant:
+    ///   MISMATCH: IRRELEVANT_QUESTION||&lt;ROUTED_QUERYCODE&gt;
+    /// </summary>
+    public async Task<string> TuningQuestionAsync(
+        string rawUserQuestion,
+        string environmentTag,
+        string routedQueryCode,
+        AgentSwitcher agentSwitcher,
         CancellationToken ct)
     {
         var kernel = agentSwitcher switch
@@ -26,9 +37,9 @@ public sealed class SkPromptRunner(KernelFactory factory, IWebHostEnvironment en
 
         var args = new KernelArguments()
         {
-            ["question"] = question,
-            ["environment"] = environment,
-            ["servers"] = servers,
+            ["rawUserQuestion"] = rawUserQuestion,
+            ["environmentTag"] = environmentTag,
+            ["routedQueryCode"] = routedQueryCode ?? string.Empty,
         };
 
         var result = await kernel.InvokeAsync(fn, args, ct);
@@ -36,7 +47,17 @@ public sealed class SkPromptRunner(KernelFactory factory, IWebHostEnvironment en
         return (result.GetValue<string>() ?? string.Empty).Trim();
     }
 
-    public async Task<string> GenerateScriptAsync(string tunedQuestion, string servers, AgentSwitcher agentSwitcher, CancellationToken ct)
+    /// <summary>
+    /// Generates a READ-ONLY script for the tuned task.
+    /// - For &lt;SqlServer_Live&gt;: T-SQL
+    /// - Otherwise: PowerShell
+    /// Output is CODE ONLY.
+    /// </summary>
+    public async Task<string> GenerateScriptAsync(
+        string environmentTag,
+        string task,
+        AgentSwitcher agentSwitcher,
+        CancellationToken ct)
     {
         var kernel = agentSwitcher switch
         {
@@ -45,15 +66,15 @@ public sealed class SkPromptRunner(KernelFactory factory, IWebHostEnvironment en
             _ => throw new ArgumentNullException(nameof(agentSwitcher),"Parameter is required ")
         };
 
-        var folder = Path.Combine(_env.ContentRootPath, "Prompt", "GenerateScript");
+        var subFolder = string.Equals(environmentTag, "<SqlServer_Live>", StringComparison.OrdinalIgnoreCase)
+            ? "Sql"
+            : "Windows";
 
-        var fn = PromptFunctionLoader.LoadFromFolder(folder, "GenerateScript");
+        var folder = Path.Combine(_env.ContentRootPath, "Prompt", "GenerateScript", subFolder);
 
-        var args = new KernelArguments()
-        {
-            ["tunedQuestion"] = tunedQuestion,
-            ["servers"] = servers,
-        };
+        var fn = PromptFunctionLoader.LoadFromFolder(folder, subFolder);
+
+        var args = new KernelArguments() { ["task"] = task };
 
         var result = await kernel.InvokeAsync(fn, args, ct);
 
