@@ -1,0 +1,8 @@
+﻿{
+  "description": "Tune and normalize a user question",
+  "input_variables": [
+    { "name": "question", "description": "Original question", "is_required": true },
+    { "name": "environment", "description": "SQL Server or Windows", "is_required": true },
+    { "name": "servers", "description": "Selected servers", "is_required": false }
+  ]
+}

@@ -20,6 +20,8 @@ await app.InitializeSeedAsync();
 
 app.UseHttpsRedirection();
 
+app.UseExceptionHandler(_ => { });
+
 app.MapEndpoints();
 
 app.Run();

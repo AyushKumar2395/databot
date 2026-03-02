@@ -10,4 +10,14 @@
       <ProjectReference Include="..\Domain\Domain.csproj" />
     </ItemGroup>
 
+    <ItemGroup>
+      <PackageReference Include="Google.GenAI" Version="1.2.0" />
+      <PackageReference Include="Microsoft.SemanticKernel" Version="1.72.0" />
+      <PackageReference Include="Microsoft.SemanticKernel.Connectors.OpenAI" Version="1.72.0" />
+    </ItemGroup>
+
+    <ItemGroup>
+      <Folder Include="Common\Interfaces\" />
+    </ItemGroup>
+
 </Project>
