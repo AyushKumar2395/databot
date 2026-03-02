@@ -1,4 +1,5 @@
-﻿using Infrastructure.Helpers;
+﻿using Domain.Enums;
+using Infrastructure.Helpers;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.SemanticKernel;
 
@@ -9,10 +10,15 @@ public sealed class SkPromptRunner(KernelFactory factory, IWebHostEnvironment en
     private readonly KernelFactory _kernelFactory = factory;
     private readonly IWebHostEnvironment _env = env;
 
-    public async Task<string> TuningQuestionAsync(string question, string environment, string servers,
+    public async Task<string> TuningQuestionAsync(string question, string environment, string servers, AgentSwitcher agentSwitcher,
         CancellationToken ct)
     {
-        var kernel = _kernelFactory.CreateOpenAiKernel();
+        var kernel = agentSwitcher switch
+        {
+            AgentSwitcher.GPT5Mini => _kernelFactory.CreateOpenAiKernel(),
+            AgentSwitcher.Gemini2_5FlashLite => _kernelFactory.CreateGeminiKernel(),
+            _ => throw new ArgumentNullException()
+        };
 
         var folder = Path.Combine(_env.ContentRootPath, "Prompt", "TuningQuestion");
 
@@ -30,9 +36,14 @@ public sealed class SkPromptRunner(KernelFactory factory, IWebHostEnvironment en
         return (result.GetValue<string>() ?? string.Empty).Trim();
     }
 
-    public async Task<string> GenerateScriptAsync(string tunedQuestion, string servers, CancellationToken ct)
+    public async Task<string> GenerateScriptAsync(string tunedQuestion, string servers, AgentSwitcher agentSwitcher, CancellationToken ct)
     {
-        var kernel = _kernelFactory.CreateOpenAiKernel();
+        var kernel = agentSwitcher switch
+        {
+            AgentSwitcher.GPT5Mini => _kernelFactory.CreateOpenAiKernel(),
+            AgentSwitcher.Gemini2_5FlashLite => _kernelFactory.CreateGeminiKernel(),
+            _ => throw new ArgumentNullException(nameof(agentSwitcher),"Parameter is required ")
+        };
 
         var folder = Path.Combine(_env.ContentRootPath, "Prompt", "GenerateScript");
 

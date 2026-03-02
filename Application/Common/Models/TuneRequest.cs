@@ -1,3 +1,5 @@
-﻿namespace Application.Common.Models;
+﻿using Domain.Enums;
 
-public record TuneRequest(string Question, string Environment, string[] Servers);
+namespace Application.Common.Models;
+
+public record AskQuestionRequest(AgentSwitcher AgentModel, string Question, string Environment, string[] Servers);

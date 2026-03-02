@@ -17,4 +17,14 @@ public sealed class KernelFactory(IOptions<LlmOptions> options)
 
         return builder.Build();
     }
+
+    public Kernel CreateGeminiKernel(string? overrideModel = null)
+    {
+        var model = overrideModel ?? _llmOptions.Gemini.ModelId;
+
+        var builder = Kernel.CreateBuilder()
+        .AddGoogleAIGeminiChatCompletion(modelId: model, apiKey: _llmOptions.Gemini.ApiKey);
+
+        return builder.Build();
+    }
 }

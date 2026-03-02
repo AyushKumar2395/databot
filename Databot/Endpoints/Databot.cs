@@ -15,14 +15,14 @@ public class Databot : EndpointGroupBase
             .ProducesProblem(StatusCodes.Status400BadRequest);
     }
 
-    async Task<Results<Ok<string>, BadRequest>> TuningQuestion(SkPromptRunner runner, TuneRequest request,
+    async Task<Results<Ok<string>, BadRequest>> TuningQuestion(SkPromptRunner runner, AskQuestionRequest request,
         CancellationToken cancellationToken)
     {
         var servers = string.Join(',', request.Servers);
         var tunedQuestion = await runner.TuningQuestionAsync(request.Question, request.Environment,
-            servers, cancellationToken);
+            servers, request.AgentModel, cancellationToken);
 
-        var script = await runner.GenerateScriptAsync(tunedQuestion, servers, cancellationToken);
+        var script = await runner.GenerateScriptAsync(tunedQuestion, servers, request.AgentModel, cancellationToken);
         return TypedResults.Ok(script);
     }
 }
