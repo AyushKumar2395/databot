@@ -1,4 +1,5 @@
-﻿using Application.Common.Models;
+﻿using Application.Common.Interfaces;
+using Application.Common.Models;
 using Domain.Entities;
 using Infrastructure.Data;
 using Infrastructure.Repository;
@@ -35,5 +36,6 @@ public static class DependencyInjection
 
         builder.Services.AddSingleton<KernelFactory>();
         builder.Services.AddSingleton<SkPromptRunner>();
+        builder.Services.AddSingleton<IQueryCodeRouterService, QueryCodeRouterService>();
     }
 }

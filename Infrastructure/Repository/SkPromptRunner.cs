@@ -49,7 +49,7 @@ public sealed class SkPromptRunner(KernelFactory factory, IWebHostEnvironment en
 
     /// <summary>
     /// Generates a READ-ONLY script for the tuned task.
-    /// - For &lt;SqlServer_Live&gt;: T-SQL
+    /// - For <SqlServer_Live>: T-SQL
     /// - Otherwise: PowerShell
     /// Output is CODE ONLY.
     /// </summary>
@@ -59,11 +59,14 @@ public sealed class SkPromptRunner(KernelFactory factory, IWebHostEnvironment en
         AgentSwitcher agentSwitcher,
         CancellationToken ct)
     {
+        if (string.IsNullOrWhiteSpace(task))
+            return string.Empty;
+
         var kernel = agentSwitcher switch
         {
             AgentSwitcher.GPT5Mini => _kernelFactory.CreateOpenAiKernel(),
             AgentSwitcher.Gemini2_5FlashLite => _kernelFactory.CreateGeminiKernel(),
-            _ => throw new ArgumentNullException(nameof(agentSwitcher),"Parameter is required ")
+            _ => throw new ArgumentNullException(nameof(agentSwitcher), "Parameter is required")
         };
 
         var subFolder = string.Equals(environmentTag, "<SqlServer_Live>", StringComparison.OrdinalIgnoreCase)
@@ -72,12 +75,34 @@ public sealed class SkPromptRunner(KernelFactory factory, IWebHostEnvironment en
 
         var folder = Path.Combine(_env.ContentRootPath, "Prompt", "GenerateScript", subFolder);
 
+        // IMPORTANT: function name should match folder function config (keep as you already have)
         var fn = PromptFunctionLoader.LoadFromFolder(folder, subFolder);
 
-        var args = new KernelArguments() { ["task"] = task };
+        // Pass BOTH values so the prompt can bind them
+        var args = new KernelArguments
+        {
+            ["task"] = task.Trim(),
+            ["environmentTag"] = environmentTag
+        };
 
         var result = await kernel.InvokeAsync(fn, args, ct);
+        var script = (result.GetValue<string>() ?? string.Empty).Trim();
 
-        return (result.GetValue<string>() ?? string.Empty).Trim();
+        // Optional safety: ensure SQL starts correctly
+        if (string.Equals(subFolder, "Sql", StringComparison.OrdinalIgnoreCase))
+        {
+            var firstToken = script.Split(new[] { ' ', '\r', '\n', '\t' }, StringSplitOptions.RemoveEmptyEntries)
+                                   .FirstOrDefault() ?? string.Empty;
+
+            if (!firstToken.Equals("SELECT", StringComparison.OrdinalIgnoreCase) &&
+                !firstToken.Equals("WITH", StringComparison.OrdinalIgnoreCase) &&
+                !firstToken.Equals("DECLARE", StringComparison.OrdinalIgnoreCase))
+            {
+                // Force failure instead of returning a wrong script
+                return string.Empty;
+            }
+        }
+
+        return script;
     }
 }
