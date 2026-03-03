@@ -1,8 +1,8 @@
-﻿{
+{
   "description": "Tune and normalize a user question",
   "input_variables": [
-    { "name": "question", "description": "Original question", "is_required": true },
-    { "name": "environment", "description": "SQL Server or Windows", "is_required": true },
-    { "name": "servers", "description": "Selected servers", "is_required": false }
+    { "name": "rawUserQuestion", "description": "Original user question", "is_required": true },
+    { "name": "environmentTag", "description": "Execution environment", "is_required": true },
+    { "name": "routedQueryCode", "description": "Pre-routed query code echo", "is_required": false }
   ]
 }

@@ -1,5 +1,4 @@
-﻿using System.Reflection;
-using Domain.Constants;
+﻿using Domain.Constants;
 using Domain.Entities;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Identity;
@@ -39,11 +38,11 @@ internal sealed class SeedingService(
         {
             switch (isDevelopment)
             {
-                case true when _context.Database.IsNpgsql():
+                case true when _context.Database.IsSqlServer():
                     await _context.Database.EnsureDeletedAsync();
                     await _context.Database.EnsureCreatedAsync();
                     break;
-                case false when _context.Database.IsNpgsql():
+                case false when _context.Database.IsSqlServer():
                     await _context.Database.MigrateAsync();
                     break;
             }

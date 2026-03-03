@@ -16,7 +16,25 @@ if (app.Environment.IsDevelopment())
     app.MapScalarApiReference();
 }
 
-await app.InitializeSeedAsync();
+var enableDatabaseInitialization =
+    builder.Configuration.GetValue("Database:EnableInitialization", false);
+
+if (enableDatabaseInitialization)
+{
+    try
+    {
+        await app.InitializeSeedAsync();
+    }
+    catch (Exception ex)
+    {
+        // Keep API runnable even if external DB is unavailable in local dev.
+        app.Logger.LogWarning(ex, "Database initialization failed. Continuing in API-only mode.");
+    }
+}
+else
+{
+    app.Logger.LogInformation("Database initialization is disabled (Database:EnableInitialization=false).");
+}
 
 app.UseHttpsRedirection();
 
