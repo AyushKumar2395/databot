@@ -8,6 +8,8 @@ namespace Application.Common.Interfaces;
 public interface IModelSelector
 {
     LlmModelDefinition SelectTuneModel();
+    LlmModelDefinition SelectPlanModel();
     LlmModelDefinition SelectTemplateFindModel();
+    LlmModelDefinition SelectValidateModel();
     LlmModelDefinition SelectGenerateModel();
 }

@@ -19,6 +19,7 @@ public sealed class LlmModelDefinition
     public string? UpdatedBy { get; init; }
     public bool UseForTune { get; init; }
     public bool UseForTemplateFind { get; init; }
+    public bool UseForValidate { get; init; }
     public bool UseForGenerate { get; init; }
     public bool UseForRepair { get; init; }
     public bool UseForExplain { get; init; }

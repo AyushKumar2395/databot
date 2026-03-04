@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.RegularExpressions;
 
 namespace Infrastructure.Services;
@@ -19,12 +20,17 @@ internal static partial class MockLlmBehavior
 
     private static readonly string[] SqlKeywords =
     [
-        "sql", "database", "db", "query", "table", "index", "backup", "restore", "login", "wait", "blocking"
+        "sql", "database", "databases", "db", "query", "table", "index", "backup", "restore", "login",
+        "user", "users", "principal", "principals", "server principal", "database principal",
+        "wait", "waits", "wait stats", "blocking", "blocked", "lock", "locks", "session", "sessions",
+        "job", "jobs", "agent", "tempdb", "deadlock", "always on", "availability group", "replication",
+        "active requests", "who is active", "sp_who", "sp_whoisactive", "running requests"
     ];
 
     private static readonly string[] WindowsKeywords =
     [
-        "windows", "server", "service", "process", "event log", "disk", "memory", "cpu", "port", "firewall", "patch"
+        "windows", "server", "service", "process", "event log", "disk", "drive", "drives", "volume", "storage",
+        "memory", "cpu", "port", "firewall", "patch", "iis", "cluster", "certificate", "network", "uptime"
     ];
 
     private static readonly string[] SqlDangerousTokens =
@@ -52,7 +58,7 @@ internal static partial class MockLlmBehavior
 
         // Phase 1: Validation
         if (string.IsNullOrWhiteSpace(question) || IsGreetingOnly(question) || !HasMeaningfulContent(question))
-            return $"MISMATCH: EMPTY_OR_UNCLEAR - Please ask a clear ops question with what you want to check.||{queryCodeEcho}";
+            return $"MISMATCH: EMPTY_OR_UNCLEAR - Please ask a clear question.||{queryCodeEcho}";
 
         if (EnvironmentRules.IsGeneral(environmentTag) && ContainsAny(question, SexualWords))
         {
@@ -63,13 +69,13 @@ internal static partial class MockLlmBehavior
         if (EnvironmentRules.IsSqlServer(environmentTag) && !ContainsAny(question, SqlKeywords))
         {
             return
-                $"MISMATCH: SQLSERVER_ONLY - Please ask a SQL Server administration/diagnostics question for this mode.||{queryCodeEcho}";
+                $"MISMATCH: SQLSERVER_ONLY - Only SQL Server related questions are allowed in this mode. Choose Windows/General for other topics.||{queryCodeEcho}";
         }
 
         if (EnvironmentRules.IsWindows(environmentTag) && !ContainsAny(question, WindowsKeywords))
         {
             return
-                $"MISMATCH: WINDOWS_ONLY - Please ask a Windows Server / Infrastructure administration question for this mode.||{queryCodeEcho}";
+                $"MISMATCH: WINDOWS_ONLY - Only Windows/Infrastructure questions are allowed in this mode. Choose SQL/General for other topics.||{queryCodeEcho}";
         }
 
         if (IsDangerousRequest(question, environmentTag))
@@ -113,7 +119,62 @@ $Result
 """;
         }
 
+        if (EnvironmentRules.IsGeneral(environmentTag))
+            return BuildGeneralAnswer(tunedQuestion);
+
         return string.Empty;
+    }
+
+    public static string BuildValidateTemplateJson(string environmentTag, string tunedQuestion, string promptTemplate)
+    {
+        _ = environmentTag;
+        _ = tunedQuestion;
+
+        var safeScript = ExtractRenderedScriptFromValidatePrompt(promptTemplate);
+        var payload = new
+        {
+            isValid = true,
+            changesMade = false,
+            changeSummary = "No patch needed in mock validator.",
+            validatedScript = safeScript,
+            updatedBoundParameters = new { },
+            confidence = 0.75
+        };
+
+        return JsonSerializer.Serialize(payload);
+    }
+
+    private static string ExtractRenderedScriptFromValidatePrompt(string promptTemplate)
+    {
+        if (string.IsNullOrWhiteSpace(promptTemplate))
+            return string.Empty;
+
+        var startMarker = "Current Rendered Script:";
+        var endMarker = "Safety Policy JSON:";
+        var start = promptTemplate.IndexOf(startMarker, StringComparison.OrdinalIgnoreCase);
+        if (start < 0)
+            return string.Empty;
+
+        start += startMarker.Length;
+        var end = promptTemplate.IndexOf(endMarker, start, StringComparison.OrdinalIgnoreCase);
+        if (end < 0)
+            end = promptTemplate.Length;
+
+        return promptTemplate[start..end].Trim();
+    }
+
+    public static string BuildGeneralAnswer(string question)
+    {
+        if (string.IsNullOrWhiteSpace(question))
+            return "Please ask a clear question.";
+
+        if (ContainsAny(question, SexualWords))
+        {
+            return
+                "I can't help with sexual content. I can help with general, educational, or technical questions instead.";
+        }
+
+        return $"General answer: {Normalize(question)}";
     }
 
     private static bool IsDangerousRequest(string question, string environmentTag)

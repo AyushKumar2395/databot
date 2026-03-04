@@ -29,6 +29,7 @@ public sealed class HardcodedModelSelector(ILogger<HardcodedModelSelector> logge
             UpdatedBy = null,
             UseForTune = true,
             UseForTemplateFind = true,
+            UseForValidate = true,
             UseForGenerate = true,
             UseForRepair = true,
             UseForExplain = true,
@@ -50,6 +51,7 @@ public sealed class HardcodedModelSelector(ILogger<HardcodedModelSelector> logge
             UpdatedBy = null,
             UseForTune = false,
             UseForTemplateFind = false,
+            UseForValidate = false,
             UseForGenerate = false,
             UseForRepair = false,
             UseForExplain = false,
@@ -71,6 +73,7 @@ public sealed class HardcodedModelSelector(ILogger<HardcodedModelSelector> logge
             UpdatedBy = null,
             UseForTune = false,
             UseForTemplateFind = false,
+            UseForValidate = false,
             UseForGenerate = false,
             UseForRepair = false,
             UseForExplain = false,
@@ -80,7 +83,12 @@ public sealed class HardcodedModelSelector(ILogger<HardcodedModelSelector> logge
 
     public LlmModelDefinition SelectTuneModel() => SelectByFlag(m => m.UseForTune, "UseForTune");
 
+    public LlmModelDefinition SelectPlanModel() => SelectTuneModel();
+
     public LlmModelDefinition SelectTemplateFindModel() => SelectByFlag(m => m.UseForTemplateFind, "UseForTemplateFind");
+
+    public LlmModelDefinition SelectValidateModel() =>
+        SelectByFlag(m => m.UseForValidate || m.UseForRepair, "UseForValidate");
 
     public LlmModelDefinition SelectGenerateModel() => SelectByFlag(m => m.UseForGenerate, "UseForGenerate");
 

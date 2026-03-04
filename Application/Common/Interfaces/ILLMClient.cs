@@ -22,4 +22,11 @@ public interface ILLMClient
         string environmentTag,
         string modelKey,
         CancellationToken cancellationToken);
+
+    Task<string> ValidateTemplateAsync(
+        string promptTemplate,
+        string tunedQuestion,
+        string environmentTag,
+        string modelKey,
+        CancellationToken cancellationToken);
 }

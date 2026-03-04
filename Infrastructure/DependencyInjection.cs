@@ -33,6 +33,7 @@ public static class DependencyInjection
         var mcpConfig = builder.Configuration.GetSection("LLM");
 
         builder.Services.Configure<LlmOptions>(mcpConfig);
+        builder.Services.Configure<ScriptExecutionOptions>(builder.Configuration.GetSection("ScriptExecution"));
 
         builder.Services.AddIdentityApiEndpoints<User>()
             .AddRoles<ApplicationRole>()
@@ -41,6 +42,10 @@ public static class DependencyInjection
         builder.Services.AddScoped<SeedingService>();
 
         builder.Services.AddScoped<IAskPipelineService, AskPipelineService>();
+        builder.Services.AddScoped<IScriptAutoFixOrchestrator, ScriptAutoFixOrchestrator>();
+        builder.Services.AddScoped<ScriptSafetyScanner>();
+        builder.Services.AddScoped<ISqlExecutor, SqlExecutor>();
+        builder.Services.AddScoped<IPowerShellExecutor, PowerShellExecutor>();
         builder.Services.AddSingleton<IModelSelector, HardcodedModelSelector>();
         builder.Services.AddSingleton<IToolRegistryResolver, StubToolRegistryResolver>();
         builder.Services.AddSingleton<ILLMClient, GeminiClient>();

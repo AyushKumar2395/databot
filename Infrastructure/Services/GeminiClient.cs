@@ -110,4 +110,48 @@ public sealed class GeminiClient(
             return MockLlmBehavior.BuildGenerateScript(environmentTag, tunedQuestion);
         }
     }
+
+    public async Task<string> ValidateTemplateAsync(
+        string promptTemplate,
+        string tunedQuestion,
+        string environmentTag,
+        string modelKey,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(_llmOptions.Gemini.ApiKey))
+        {
+            _logger.LogWarning(
+                "Gemini API key is not configured. Using deterministic template-validate mock for model {ModelKey}.",
+                modelKey);
+
+            return MockLlmBehavior.BuildValidateTemplateJson(environmentTag, tunedQuestion, promptTemplate);
+        }
+
+        try
+        {
+            _logger.LogInformation("Using Gemini validate model {ModelKey}.", modelKey);
+
+            var kernel = _kernelFactory.CreateGeminiKernel(modelKey);
+            var args = new KernelArguments
+            {
+                ["task"] = tunedQuestion,
+                ["environmentTag"] = environmentTag
+            };
+
+            var result = await kernel.InvokePromptAsync(promptTemplate, args, cancellationToken: cancellationToken);
+            var content = (result.GetValue<string>() ?? string.Empty).Trim();
+            return string.IsNullOrWhiteSpace(content)
+                ? MockLlmBehavior.BuildValidateTemplateJson(environmentTag, tunedQuestion, promptTemplate)
+                : content;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "Gemini validate call failed for model {ModelKey}. Falling back to deterministic mock.",
+                modelKey);
+            return MockLlmBehavior.BuildValidateTemplateJson(environmentTag, tunedQuestion, promptTemplate);
+        }
+    }
+
 }

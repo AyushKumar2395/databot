@@ -114,4 +114,50 @@ public sealed class OpenAiClient(
             return MockLlmBehavior.BuildGenerateScript(environmentTag, tunedQuestion);
         }
     }
+
+    public async Task<string> ValidateTemplateAsync(
+        string promptTemplate,
+        string tunedQuestion,
+        string environmentTag,
+        string modelKey,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(_llmOptions.OpenAI.ApiKey))
+        {
+            _logger.LogWarning(
+                "OpenAI API key is not configured. Using deterministic template-validate mock for model {ModelKey}.",
+                modelKey);
+
+            return MockLlmBehavior.BuildValidateTemplateJson(environmentTag, tunedQuestion, promptTemplate);
+        }
+
+        try
+        {
+            _logger.LogInformation(
+                "Using OpenAI validate model {ModelKey}.",
+                modelKey);
+
+            var kernel = _kernelFactory.CreateOpenAiKernel(modelKey);
+            var args = new KernelArguments
+            {
+                ["task"] = tunedQuestion,
+                ["environmentTag"] = environmentTag
+            };
+
+            var result = await kernel.InvokePromptAsync(promptTemplate, args, cancellationToken: cancellationToken);
+            var content = (result.GetValue<string>() ?? string.Empty).Trim();
+            return string.IsNullOrWhiteSpace(content)
+                ? MockLlmBehavior.BuildValidateTemplateJson(environmentTag, tunedQuestion, promptTemplate)
+                : content;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "OpenAI validate call failed for model {ModelKey}. Falling back to deterministic mock.",
+                modelKey);
+            return MockLlmBehavior.BuildValidateTemplateJson(environmentTag, tunedQuestion, promptTemplate);
+        }
+    }
+
 }

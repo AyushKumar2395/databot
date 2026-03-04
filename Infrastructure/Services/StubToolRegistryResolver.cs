@@ -38,9 +38,9 @@ public sealed class StubToolRegistryResolver(ILogger<StubToolRegistryResolver> l
         return Task.FromResult(new ToolResolutionResult
         {
             Found = false,
-            ToolCode = null,
+            QueryCode = null,
             ScriptLanguage = null,
-            Script = null,
+            ScriptTemplate = null,
             Score = null
         });
     }

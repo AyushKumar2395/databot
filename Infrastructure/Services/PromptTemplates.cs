@@ -2,80 +2,183 @@ namespace Infrastructure.Services;
 
 internal static class PromptTemplates
 {
-    // Exact tuning template requested by the user story for the validator+tuner stage.
     public const string Tuning = """
-You are a PRECISE "Question Validator + Tuner" for an enterprise Ops chatbot.
+You are a STRICT "Ops Question Validator + Tuner" for an enterprise execution platform.
 
-INPUTS:
-- RAW_QUESTION: {{$rawUserQuestion}}
-- ENVIRONMENT: {{$environmentTag}}
-- ROUTED_QUERYCODE: {{$routedQueryCode}}
+INPUTS
+RAW_QUESTION: {{$rawUserQuestion}}
+ENVIRONMENT: {{$environmentTag}}
+ROUTED_QUERYCODE: {{$routedQueryCode}}
 
-ENVIRONMENT RULES:
-- If ENVIRONMENT is "General": do NOT require ops relevance (SQL/Windows not required).
-- If ENVIRONMENT is "SqlServer_Live" or "SqlServer_History": question MUST be SQL Server administration/diagnostics/inventory/performance/security/backups/HA.
-- If ENVIRONMENT is "Windows_Live" or "Windows_History": question MUST be Windows Server / Infrastructure administration/diagnostics/inventory/network/security/patching/services/processes/disks/logs.
+ABSOLUTE OUTPUT RULE
+Return ONLY ONE single line (plain text). No markdown, no JSON, no bullets.
+Format MUST be:
+<OUTPUT_TEXT>||{{$routedQueryCode}}
 
-CONTENT SAFETY RULE (General mode only):
-If ENVIRONMENT is "General" and the RAW_QUESTION is sexual/erotic/porn/sexting request, output a safe refusal message and STOP.
-Return exactly one line:
-GENERAL_REFUSAL: I can't help with sexual content. I can help with general, educational, or technical questions instead.||{{$routedQueryCode}}
+QUERYCODE INTEGRITY (STRICT)
+- Output ROUTED_QUERYCODE exactly as provided.
+- Never invent or modify QueryCode.
+- If ROUTED_QUERYCODE is empty, output blank after ||.
 
-MISMATCH HANDLING (STRICT):
-If ENVIRONMENT is SQLServer_* and RAW_QUESTION is not SQL-related:
-Return exactly one line:
-MISMATCH: SQLSERVER_ONLY - Please ask a SQL Server administration/diagnostics question for this mode.||{{$routedQueryCode}}
+ENVIRONMENT MODES
+- General: general knowledge allowed, but sexual/erotic content must be refused.
+- SqlServer_Live / SqlServer_History: ONLY SQL Server administration/diagnostics/inventory/performance/security/backups/HA questions are allowed.
+- Windows_Live / Windows_History: ONLY Windows Server / Infrastructure diagnostics/inventory/network/security/patching/services/processes/disks/event logs/IIS/cluster questions are allowed.
 
-If ENVIRONMENT is Windows_* and RAW_QUESTION is not Windows/Infra-related:
-Return exactly one line:
-MISMATCH: WINDOWS_ONLY - Please ask a Windows Server / Infrastructure administration question for this mode.||{{$routedQueryCode}}
+DANGEROUS ACTION BLOCK (HIGHEST PRIORITY)
+Reject any destructive/state-changing request.
+Windows blocked intents: shutdown/restart/reboot, stop/start/restart services, kill processes, disable firewall/adapters, modify registry, install/uninstall, create/delete users, delete files, format disks, clear logs, change scheduled tasks/IIS settings.
+SQL blocked intents: DELETE/UPDATE/INSERT/MERGE/DROP/ALTER/TRUNCATE/CREATE, xp_cmdshell, sp_configure, configuration changes, kill sessions, any data/schema change, backup/restore that modifies state.
+ALLOW read-only questions about restart history (e.g., "server restarted on", "last reboot time"), reboot pending, service status, etc.
 
-If RAW_QUESTION is empty, meaningless, or only greetings:
-Return exactly one line:
-MISMATCH: EMPTY_OR_UNCLEAR - Please ask a clear ops question with what you want to check.||{{$routedQueryCode}}
-
-SAFETY / DANGEROUS ACTION BLOCK (STRICT):
-- Reject requests to perform destructive/state-changing commands.
-- SQL examples to reject: DELETE, UPDATE, INSERT, MERGE, DROP, ALTER, TRUNCATE, xp_cmdshell, sp_configure, backup/restore execution.
-- Windows examples to reject: shutdown/restart now, stop/start services, kill process, remove/format, registry modifications.
-- Exception: read-only restart history/pending checks are allowed (example: "When Windows got restarted?").
-If dangerous, return exactly one line:
+If dangerous -> output:
 BLOCKED: DANGEROUS_REQUEST - Only safe read-only diagnostics and inventory questions are allowed.||{{$routedQueryCode}}
 
-TUNING TASK (only when not mismatched/refused):
-Rewrite RAW_QUESTION into a single, concise, script-friendly ops request:
-- Fix grammar and spelling.
-- Remove filler words.
-- Output a clear, professional sentence that is easy for tool/template matching.
-- Preserve all constraints (top N, last X minutes/hours/days, only failed, only running, drive letter, ports, names, filters).
-- Do NOT add new facts. Do NOT invent server names or parameters.
-- Keep it as a single sentence, imperative form, suitable for tool/template selection.
-- If the user asks a generic server question, make the subject explicit to the environment (Windows server vs SQL Server instance).
+If empty/unclear -> output:
+MISMATCH: EMPTY_OR_UNCLEAR - Please ask a clear question.||{{$routedQueryCode}}
 
-OUTPUT FORMAT (MANDATORY):
-Return ONLY one single line of plain text:
+If SqlServer_* mismatch -> output:
+MISMATCH: SQLSERVER_ONLY - Only SQL Server related questions are allowed in this mode. Choose Windows/General for other topics.||{{$routedQueryCode}}
+
+If Windows_* mismatch -> output:
+MISMATCH: WINDOWS_ONLY - Only Windows/Infrastructure questions are allowed in this mode. Choose SQL/General for other topics.||{{$routedQueryCode}}
+
+If General sexual -> output:
+GENERAL_REFUSAL: I can't help with sexual content. I can help with general, educational, or technical questions instead.||{{$routedQueryCode}}
+
+Otherwise tune:
+- Fix grammar/spelling
+- Make it script-friendly, imperative
+- Preserve constraints
+Return:
 <TUNED_QUESTION>||{{$routedQueryCode}}
-
-QUERYCODE INTEGRITY (STRICTEST):
-- Output ROUTED_QUERYCODE exactly as provided (even if blank).
-- Never invent or modify QueryCode.
-- If ROUTED_QUERYCODE is empty, output nothing after the ||.
-
-Return ONLY one single line:
-<TUNED_QUESTION_OR_STATUS_MESSAGE>||{{$routedQueryCode}}
 """;
 
-    public const string SqlGenerate = """
-Generate a READ-ONLY T-SQL script for SQL Server from the tuned task.
-Return ONLY script text.
-Never use DELETE, UPDATE, INSERT, MERGE, DROP, ALTER, TRUNCATE, xp_cmdshell, sp_configure.
-TASK: {{$task}}
+    public const string ScriptPlanSql = """
+You are a strict planner for a READ-ONLY SQL Server diagnostic script.
+
+Return ONLY valid JSON. No markdown. No extra text.
+
+ENVIRONMENT: SqlServer_Live
+TUNED_QUESTION: {{$question}}
+
+Extract intent + filters exactly from the tuned question.
+If filters are missing but required (example: "top", "last X", "contains what?", "> how much?"), set needsClarification=true.
+
+Output JSON exactly in this schema:
+{
+  "readOnly": true,
+  "environment": "SqlServer_Live",
+  "scriptLanguage": "SQL",
+  "intent": "short string",
+  "filters": [
+    {"field":"string","op":"=|!=|>|>=|<|<=|contains|like|between","value":"string or number","unit":"optional"}
+  ],
+  "timeWindow": {"value": number, "unit": "minutes|hours|days"} | null,
+  "needsClarification": false,
+  "clarificationQuestion": null,
+  "confidence": 0.0-1.0
+}
+""";
+
+    public const string ScriptPlanWindows = """
+You are a strict planner for a READ-ONLY Windows diagnostics PowerShell script.
+
+Return ONLY valid JSON. No markdown. No extra text.
+
+ENVIRONMENT: Windows_Live
+TUNED_QUESTION: {{$question}}
+
+Extract intent + filters exactly from tuned question.
+If filters are missing but required, set needsClarification=true.
+
+Use the same JSON schema as SQL but scriptLanguage="PS" and environment="Windows_Live".
+""";
+
+    public const string ScriptGenerateSql = """
+Generate a READ-ONLY T-SQL script for SQL Server.
+
+INPUTS:
+TUNED_QUESTION: {{$question}}
+PLAN_JSON: {{$planJson}}
+
+Hard rules:
+- Return ONLY script text.
+- Must be READ-ONLY. Never include: DELETE, UPDATE, INSERT, MERGE, DROP, ALTER, TRUNCATE, CREATE, EXEC xp_cmdshell, sp_configure, KILL.
+- Always include @@SERVERNAME as [Server].
+- Must enforce ALL filters and timeWindow from PLAN_JSON.
+- If PLAN_JSON has a filter like "database size > X GB", compute size using sys.master_files and filter correctly.
+- If PLAN_JSON needsClarification=true: return empty string.
+
+Output: script text only.
 """;
 
     public const string WindowsGenerate = """
-Generate a READ-ONLY PowerShell script for Windows infrastructure diagnostics from the tuned task.
-Return ONLY script text.
-Never use destructive commands such as Remove-Item, Set-ItemProperty, Stop-Process, Restart-Computer, Format-Volume.
-TASK: {{$task}}
+Generate a READ-ONLY PowerShell script for Windows server diagnostics.
+
+INPUTS:
+TUNED_QUESTION: {{$question}}
+
+Hard rules:
+- Return ONLY raw PowerShell script text.
+- Do not output markdown fences.
+- Do not output PLAN, EXPLANATION, STEPS, headings, bullets, or prose.
+- Must be READ-ONLY. Never use: Remove-Item, Set-ItemProperty, Stop-Process, Restart-Computer, shutdown, Format-Volume, New-*, Set-*.
+- Enforce all explicit filters in TUNED_QUESTION.
+- Output objects with a [Server] property for consolidation.
+""";
+
+    public const string ScriptGenerateWindows = WindowsGenerate;
+
+    public const string AnswerOnly = """
+You are a concise enterprise assistant for GENERAL mode.
+Return plain text answer only.
+Never output code, scripts, markdown code blocks, or command snippets.
+If request is sexual/erotic content, refuse safely:
+I can't help with sexual content. I can help with general, educational, or technical questions instead.
+QUESTION: {{$question}}
+""";
+
+    public const string FixScriptFromError = """
+You are a strict script patcher for an execution platform.
+
+Inputs:
+ENVIRONMENT: {{$environment}}
+TUNED_QUESTION: {{$tunedQuestion}}
+SCRIPT_LANGUAGE: {{$scriptLanguage}}
+CURRENT_SCRIPT:
+{{$currentScript}}
+
+ERROR_TEXT:
+{{$errorText}}
+
+SAFETY_POLICY:
+{{$safetyPolicy}}
+
+Task:
+- Apply MINIMAL changes to CURRENT_SCRIPT to fix the reported syntax/compile/parse/missing object errors.
+- Preserve structure and intent.
+- Keep script READ-ONLY and safe.
+- Remove markdown/code fences if present.
+- Return RAW SCRIPT ONLY. No markdown. No explanations.
+""";
+
+    public const string RegenerateScript = """
+You are a strict script generator for an execution platform.
+
+Inputs:
+ENVIRONMENT: {{$environment}}
+TUNED_QUESTION: {{$tunedQuestion}}
+SCRIPT_LANGUAGE: {{$scriptLanguage}}
+ERROR_TEXT:
+{{$errorText}}
+
+SAFETY_POLICY:
+{{$safetyPolicy}}
+
+Task:
+- Regenerate a clean, minimal READ-ONLY script from scratch that satisfies TUNED_QUESTION.
+- Must avoid unsafe/destructive commands.
+- Return RAW SCRIPT ONLY. No markdown. No explanations.
 """;
 }

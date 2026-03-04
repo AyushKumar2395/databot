@@ -15,6 +15,12 @@ public sealed class Ask : EndpointGroupBase
             .WithDescription("Runs tune -> template lookup -> generate pipeline.")
             .Produces<AskApiResponse>()
             .ProducesValidationProblem();
+
+        builder.MapPost(HandleExecuteAsync, "execute")
+            .WithSummary("Execute generated script with autofix and consolidation")
+            .WithDescription("Runs execute + autofix + retry + consolidate across targets.")
+            .Produces<ScriptExecutionResponse>()
+            .ProducesValidationProblem();
     }
 
     private static async Task<Results<Ok<AskApiResponse>, ValidationProblem>> HandleAsync(
@@ -34,6 +40,19 @@ public sealed class Ask : EndpointGroupBase
             request.Environment);
 
         var response = await pipeline.ExecuteAsync(request, cancellationToken);
+        return TypedResults.Ok(response);
+    }
+
+    private static async Task<Results<Ok<ScriptExecutionResponse>, ValidationProblem>> HandleExecuteAsync(
+        ScriptExecutionRequest request,
+        IScriptAutoFixOrchestrator orchestrator,
+        CancellationToken cancellationToken)
+    {
+        var validationErrors = ValidateExecute(request);
+        if (validationErrors.Count > 0)
+            return TypedResults.ValidationProblem(validationErrors);
+
+        var response = await orchestrator.ExecuteAsync(request, cancellationToken);
         return TypedResults.Ok(response);
     }
 
@@ -70,5 +89,30 @@ public sealed class Ask : EndpointGroupBase
         return string.Equals(environment, "General", StringComparison.OrdinalIgnoreCase)
                || environment.StartsWith("SqlServer_", StringComparison.OrdinalIgnoreCase)
                || environment.StartsWith("Windows_", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static Dictionary<string, string[]> ValidateExecute(ScriptExecutionRequest request)
+    {
+        var errors = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
+        if (string.IsNullOrWhiteSpace(request.Environment))
+            errors["environment"] = ["Environment is required."];
+
+        if (!request.Environment.StartsWith("SqlServer_", StringComparison.OrdinalIgnoreCase) &&
+            !request.Environment.StartsWith("Windows_", StringComparison.OrdinalIgnoreCase))
+        {
+            errors["environment"] = ["Environment must be SqlServer_* or Windows_*."];
+        }
+
+        request.SelectedServers ??= [];
+        if (request.SelectedServers.Length == 0)
+            errors["selectedServers"] = ["selectedServers must contain at least one target."];
+
+        if (string.IsNullOrWhiteSpace(request.ScriptLanguage))
+            errors["scriptLanguage"] = ["scriptLanguage is required (SQL or PS)."];
+
+        if (string.IsNullOrWhiteSpace(request.GeneratedScript))
+            errors["generatedScript"] = ["generatedScript is required."];
+
+        return errors;
     }
 }
