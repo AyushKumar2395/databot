@@ -56,12 +56,35 @@ public sealed class ScriptExecutionAttempt
     [JsonPropertyName("target")]
     public string Target { get; set; } = string.Empty;
 
+    /// <summary>"EXECUTE" | "REPAIR"</summary>
+    [JsonPropertyName("phase")]
+    public string Phase { get; set; } = "EXECUTE";
+
     [JsonPropertyName("status")]
     public string Status { get; set; } = "FAILED"; // FAILED | SUCCESS | BLOCKED
+
+    /// <summary>"SYNTAX" | "CONNECTION" | null</summary>
+    [JsonPropertyName("errorType")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? ErrorType { get; set; }
 
     [JsonPropertyName("error")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Error { get; set; }
+
+    [JsonPropertyName("repairedByLlm")]
+    public bool RepairedByLlm { get; set; }
+
+    [JsonPropertyName("scriptHash")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? ScriptHash { get; set; }
+
+    [JsonPropertyName("scriptPreview")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? ScriptPreview { get; set; }
+
+    [JsonPropertyName("tsUtc")]
+    public string TsUtc { get; set; } = string.Empty;
 }
 
 public sealed class ScriptExecutionServerResult
@@ -98,6 +121,9 @@ public sealed class ScriptExecutionSummary
 
     [JsonPropertyName("failCount")]
     public int FailCount { get; set; }
+
+    [JsonPropertyName("totalRowCount")]
+    public int TotalRowCount { get; set; }
 
     [JsonPropertyName("totalTargets")]
     public int TotalTargets { get; set; }

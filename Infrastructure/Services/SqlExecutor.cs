@@ -31,6 +31,7 @@ internal sealed class SqlExecutor(
     public async Task<ExecutorRunResult> ExecuteAsync(string server, string script, CancellationToken cancellationToken)
     {
         var stopwatch = Stopwatch.StartNew();
+        var (displayServer, _, _) = ParseSqlInstanceToken(server);
         try
         {
             var rows = new List<Dictionary<string, object?>>();
@@ -66,10 +67,10 @@ internal sealed class SqlExecutor(
                 } while (await reader.NextResultAsync(cancellationToken));
             }
 
-            InjectServerIfMissing(rows, server);
+            InjectServerIfMissing(rows, displayServer);
             return new ExecutorRunResult
             {
-                Server = server,
+                Server = displayServer,
                 Success = true,
                 IsRetryableCompileError = false,
                 Error = null,
@@ -83,7 +84,7 @@ internal sealed class SqlExecutor(
             _logger.LogWarning(ex, "SQL execution failed on server {Server}.", server);
             return new ExecutorRunResult
             {
-                Server = server,
+                Server = displayServer,
                 Success = false,
                 IsRetryableCompileError = IsRetryableCompileError(ex),
                 Error = error,
@@ -96,7 +97,7 @@ internal sealed class SqlExecutor(
             _logger.LogWarning(ex, "SQL execution failed on server {Server}.", server);
             return new ExecutorRunResult
             {
-                Server = server,
+                Server = displayServer,
                 Success = false,
                 IsRetryableCompileError = false,
                 Error = ex.Message,
@@ -106,13 +107,33 @@ internal sealed class SqlExecutor(
         }
     }
 
+    /// <summary>
+    /// Parses a selectedServers token into its SQL connection components.
+    /// "CTS03#Admin"  → server="CTS03", instance="Admin", connectionTarget="CTS03\Admin"
+    /// "CTS03"        → server="CTS03", instance=null,    connectionTarget="CTS03"
+    /// </summary>
+    internal static (string Server, string? Instance, string ConnectionTarget) ParseSqlInstanceToken(string token)
+    {
+        if (string.IsNullOrWhiteSpace(token))
+            return (string.Empty, null, string.Empty);
+
+        var hashIndex = token.IndexOf('#');
+        if (hashIndex < 0)
+            return (token, null, token);
+
+        var server = token[..hashIndex];
+        var instance = token[(hashIndex + 1)..];
+        return (server, instance, $@"{server}\{instance}");
+    }
+
     private string BuildSqlConnectionString(string server)
     {
+        var (_, _, connectionTarget) = ParseSqlInstanceToken(server);
         var template = _options.SqlConnectionStringTemplate;
         if (!string.IsNullOrWhiteSpace(template))
-            return template.Replace("{server}", server, StringComparison.OrdinalIgnoreCase);
+            return template.Replace("{server}", connectionTarget, StringComparison.OrdinalIgnoreCase);
 
-        return $"Server={server};Database=master;Trusted_Connection=True;TrustServerCertificate=True;Encrypt=False;";
+        return $"Server={connectionTarget};Database=master;Trusted_Connection=True;TrustServerCertificate=True;Encrypt=False;";
     }
 
     private static IReadOnlyList<string> SplitBatches(string script)
@@ -133,12 +154,14 @@ internal sealed class SqlExecutor(
         if (rows.Count == 0)
             return;
 
-        var hasServerColumn = rows.Any(r => r.Keys.Any(k => string.Equals(k, "Server", StringComparison.OrdinalIgnoreCase)));
-        if (hasServerColumn)
-            return;
-
         foreach (var row in rows)
-            row["Server"] = server;
+        {
+            if (!row.Keys.Any(k => string.Equals(k, "ServerName", StringComparison.OrdinalIgnoreCase)))
+            {
+                var existingServer = row.FirstOrDefault(kv => string.Equals(kv.Key, "Server", StringComparison.OrdinalIgnoreCase));
+                row["ServerName"] = existingServer.Value ?? server;
+            }
+        }
     }
 
     private static bool IsRetryableCompileError(SqlException ex)

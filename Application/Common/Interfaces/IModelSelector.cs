@@ -12,4 +12,5 @@ public interface IModelSelector
     LlmModelDefinition SelectTemplateFindModel();
     LlmModelDefinition SelectValidateModel();
     LlmModelDefinition SelectGenerateModel();
+    LlmModelDefinition SelectExplainModel();
 }

@@ -1,3 +1,4 @@
+using Databot.Hubs;
 using Infrastructure.Data;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -40,6 +41,7 @@ app.UseHttpsRedirection();
 
 app.UseExceptionHandler(_ => { });
 
+app.MapHub<AskHub>("/hubs/ask");
 app.MapEndpoints();
 
 app.Run();

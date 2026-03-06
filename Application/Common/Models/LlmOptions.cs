@@ -5,6 +5,7 @@ public sealed record LlmOptions
     public string DefaultProvider { get; set; } = "OpenAI";
     public AIOptions OpenAI { get; set; } = new();
     public AIOptions Gemini { get; set; } = new();
+    public AIOptions Claude { get; set; } = new();
 }
 
 public sealed record AIOptions

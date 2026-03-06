@@ -2,254 +2,296 @@ using System.Text.Json.Serialization;
 
 namespace Application.Common.Models;
 
-/// <summary>
-/// API response contract for tune/template/generate pipeline.
-/// </summary>
+/// <summary>DataBot /api/ask unified response.</summary>
 public sealed class AskApiResponse
+{
+    [JsonPropertyName("meta")]
+    public AskResponseMeta Meta { get; set; } = new();
+
+    [JsonPropertyName("request")]
+    public AskResponseRequest Request { get; set; } = new();
+
+    [JsonPropertyName("tuning")]
+    public AskResponseTuning Tuning { get; set; } = new();
+
+    [JsonPropertyName("plan")]
+    public AskResponsePlan Plan { get; set; } = new();
+
+    /// <summary>Null when the pipeline stopped before a script could be produced.</summary>
+    [JsonPropertyName("script")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public AskResponseScript? Script { get; set; }
+
+    [JsonPropertyName("result")]
+    public AskResponseResult Result { get; set; } = new();
+
+    /// <summary>LLM-generated explanation of the execution result. Null when pipeline stopped before execution.</summary>
+    [JsonPropertyName("answer")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public AskAnswerNode? Answer { get; set; }
+
+    /// <summary>Per-attempt repair log. Only present when at least one retry/repair occurred.</summary>
+    [JsonPropertyName("retryAttempts")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public List<AskRetryAttempt>? RetryAttempts { get; set; }
+}
+
+public sealed class AskResponseMeta
 {
     [JsonPropertyName("conversationId")]
     public string ConversationId { get; set; } = string.Empty;
 
-    [JsonPropertyName("userId")]
-    public string UserId { get; set; } = string.Empty;
+    [JsonPropertyName("BearerToken")]
+    public string BearerToken { get; set; } = string.Empty;
 
+    [JsonPropertyName("timestampUtc")]
+    public string TimestampUtc { get; set; } = string.Empty;
+}
+
+public sealed class AskResponseRequest
+{
     [JsonPropertyName("environment")]
     public string Environment { get; set; } = string.Empty;
 
-    [JsonPropertyName("selectedServers")]
-    public string[] SelectedServers { get; set; } = [];
+    [JsonPropertyName("question")]
+    public string Question { get; set; } = string.Empty;
 
-    [JsonPropertyName("rawQuestion")]
-    public string RawQuestion { get; set; } = string.Empty;
+    [JsonPropertyName("selectedTargets")]
+    public string[] SelectedTargets { get; set; } = [];
 
+    /// <summary>Derived from environment: "SqlServer" | "Windows" | null for General.</summary>
+    [JsonPropertyName("targetType")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? TargetType { get; set; }
+}
+
+public sealed class AskResponseTuning
+{
     [JsonPropertyName("tunedQuestion")]
     public string TunedQuestion { get; set; } = string.Empty;
 
+    /// <summary>"OK" | "STOPPED"</summary>
+    [JsonPropertyName("status")]
+    public string Status { get; set; } = string.Empty;
+
+    [JsonPropertyName("model")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public AskModelRef? Model { get; set; }
+
+    /// <summary>Populated only when Status == "STOPPED".</summary>
+    [JsonPropertyName("stopReason")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? StopReason { get; set; }
+}
+
+public sealed class AskResponsePlan
+{
+    /// <summary>"LLM_ONLY" | "GENERAL" | "STOPPED"</summary>
+    [JsonPropertyName("mode")]
+    public string Mode { get; set; } = string.Empty;
+
+    /// <summary>"LLM_ONLY" | "TEMPLATE_OR_LLM" — reflects the Generator flag used.</summary>
+    [JsonPropertyName("generatorMode")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? GeneratorMode { get; set; }
+
+    /// <summary>True when a ToolRegistry template was found and rendered successfully.</summary>
+    [JsonPropertyName("templateHit")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public bool TemplateHit { get; set; }
+
     [JsonPropertyName("queryCode")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? QueryCode { get; set; }
 
-    [JsonPropertyName("selectionMethod")]
-    public string? SelectionMethod { get; set; }
+    [JsonPropertyName("tool")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Tool { get; set; }
 
-    [JsonPropertyName("score")]
-    public double? Score { get; set; }
-
-    [JsonPropertyName("confidence")]
-    public double? Confidence { get; set; }
-
-    [JsonPropertyName("resolution")]
-    public string Resolution { get; set; } = string.Empty;
-
+    /// <summary>"SQL" | "PS" | null (General/Stopped)</summary>
     [JsonPropertyName("scriptLanguage")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? ScriptLanguage { get; set; }
 
-    [JsonPropertyName("script")]
-    public string? Script { get; set; }
-
-    [JsonPropertyName("scriptTemplate")]
+    [JsonPropertyName("model")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    public string? ScriptTemplate { get; set; }
-
-    [JsonPropertyName("renderedScript")]
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    public string? RenderedScript { get; set; }
-
-    [JsonPropertyName("boundParameters")]
-    public Dictionary<string, object?> BoundParameters { get; set; } =
-        new(StringComparer.OrdinalIgnoreCase);
-
-    [JsonPropertyName("message")]
-    public string? Message { get; set; }
-
-    [JsonPropertyName("tuningModel")]
-    public PipelineModelInfo? TuningModel { get; set; }
-
-    [JsonPropertyName("templateSelectionModel")]
-    public PipelineModelInfo? TemplateSelectionModel { get; set; }
-
-    [JsonPropertyName("scriptGenerationModel")]
-    public PipelineModelInfo? ScriptGenerationModel { get; set; }
-
-    [JsonPropertyName("executionPayload")]
-    public AskExecutionPayload? ExecutionPayload { get; set; }
-
-    [JsonPropertyName("templateMatch")]
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    public TemplateMatchInfo? TemplateMatch { get; set; }
-
-    [JsonPropertyName("template")]
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    public TemplateResponseInfo? Template { get; set; }
-
-    [JsonPropertyName("llm")]
-    public LlmResponseInfo Llm { get; set; } = new();
-
-    [JsonPropertyName("result")]
-    public AskResultInfo Result { get; set; } = new();
+    public AskModelRef? Model { get; set; }
 }
 
-/// <summary>
-/// Model metadata used by each LLM stage so UI can verify model linkage.
-/// </summary>
-public sealed class PipelineModelInfo
+public sealed class AskModelRef
 {
-    [JsonPropertyName("modelId")]
-    public int ModelId { get; set; }
-
-    [JsonPropertyName("displayName")]
-    public string DisplayName { get; set; } = string.Empty;
+    [JsonPropertyName("provider")]
+    public string Provider { get; set; } = string.Empty;
 
     [JsonPropertyName("modelKey")]
     public string ModelKey { get; set; } = string.Empty;
-
-    [JsonPropertyName("provider")]
-    public string Provider { get; set; } = string.Empty;
 }
 
-/// <summary>
-/// Ready-to-dispatch payload for downstream execution service.
-/// ScriptTemplate is populated from ToolRegistry template or LLM-generated script.
-/// </summary>
-public sealed class AskExecutionPayload
+public sealed class AskResponseScript
 {
-    [JsonPropertyName("executionMode")]
-    public string ExecutionMode { get; set; } = string.Empty; // TEMPLATE | LLM_GENERATE
+    [JsonPropertyName("final")]
+    public string Final { get; set; } = string.Empty;
 
-    [JsonPropertyName("dispatchMethod")]
-    public string DispatchMethod { get; set; } = string.Empty; // DB_RANK | DB_RANK_PLUS_LLM | LLM_GENERATE
+    [JsonPropertyName("validation")]
+    public AskScriptValidation Validation { get; set; } = new();
 
-    [JsonPropertyName("environment")]
-    public string Environment { get; set; } = string.Empty;
-
-    [JsonPropertyName("selectedServers")]
-    public string[] SelectedServers { get; set; } = [];
-
-    [JsonPropertyName("queryCode")]
+    /// <summary>"TEMPLATE" when rendered from ToolRegistry; "LLM" when generated by the model.</summary>
+    [JsonPropertyName("source")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    public string? QueryCode { get; set; }
+    public string? Source { get; set; }
 
-    [JsonPropertyName("toolId")]
+    /// <summary>Bound parameter values used during template rendering. Null for LLM-generated scripts.</summary>
+    [JsonPropertyName("parameters")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    public int? ToolId { get; set; }
-
-    [JsonPropertyName("toolName")]
-    public string? ToolName { get; set; }
-
-    [JsonPropertyName("scriptLanguage")]
-    public string? ScriptLanguage { get; set; }
-
-    [JsonPropertyName("scriptTemplate")]
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    public string? ScriptTemplate { get; set; }
-
-    [JsonPropertyName("renderedScript")]
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    public string? RenderedScript { get; set; }
-
-    [JsonPropertyName("boundParameters")]
-    public Dictionary<string, object?> BoundParameters { get; set; } =
-        new(StringComparer.OrdinalIgnoreCase);
-
-    [JsonPropertyName("parameterSchema")]
-    public string? ParameterSchema { get; set; }
-
-    [JsonPropertyName("outputSchema")]
-    public string? OutputSchema { get; set; }
-
-    [JsonPropertyName("templateSelectionModelKey")]
-    public string? TemplateSelectionModelKey { get; set; }
-
-    [JsonPropertyName("scriptGenerationModelKey")]
-    public string? ScriptGenerationModelKey { get; set; }
-
-    [JsonPropertyName("templateSelectionModelProvider")]
-    public string? TemplateSelectionModelProvider { get; set; }
-
-    [JsonPropertyName("scriptGenerationModelProvider")]
-    public string? ScriptGenerationModelProvider { get; set; }
+    public Dictionary<string, object?>? Parameters { get; set; }
 }
 
-/// <summary>
-/// Template resolution metadata from deterministic ToolRegistry selection.
-/// </summary>
-public sealed class TemplateMatchInfo
+public sealed class AskScriptValidation
 {
-    [JsonPropertyName("found")]
-    public bool Found { get; set; }
+    [JsonPropertyName("isSafeReadOnly")]
+    public bool IsSafeReadOnly { get; set; } = true;
 
-    [JsonPropertyName("toolId")]
+    [JsonPropertyName("blockedTokenFound")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    public int? ToolId { get; set; }
-
-    [JsonPropertyName("queryCode")]
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    public string? QueryCode { get; set; }
-
-    [JsonPropertyName("score")]
-    public double? Score { get; set; }
-
-    [JsonPropertyName("confidence")]
-    public double? Confidence { get; set; }
-
-    [JsonPropertyName("selectionMethod")]
-    public string? SelectionMethod { get; set; }
+    public string? BlockedTokenFound { get; set; }
 }
 
-public sealed class TemplateResponseInfo
+public sealed class AskResponseResult
 {
-    [JsonPropertyName("toolId")]
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    public int? ToolId { get; set; }
-
-    [JsonPropertyName("toolName")]
-    public string? ToolName { get; set; }
-
-    [JsonPropertyName("scriptLanguage")]
-    public string? ScriptLanguage { get; set; }
-
-    [JsonPropertyName("scriptTemplate")]
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    public string? ScriptTemplate { get; set; }
-
-    [JsonPropertyName("renderedScript")]
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    public string? RenderedScript { get; set; }
-
-    [JsonPropertyName("boundParameters")]
-    public Dictionary<string, object?> BoundParameters { get; set; } =
-        new(StringComparer.OrdinalIgnoreCase);
-
-    [JsonPropertyName("templateFailReason")]
-    public string? TemplateFailReason { get; set; }
-}
-
-public sealed class LlmResponseInfo
-{
-    [JsonPropertyName("generatedScript")]
-    public string? GeneratedScript { get; set; }
-
-    [JsonPropertyName("modelKey")]
-    public string? ModelKey { get; set; }
-
-    [JsonPropertyName("provider")]
-    public string? Provider { get; set; }
-}
-
-public sealed class AskResultInfo
-{
+    /// <summary>"EXECUTION" | "ANSWER_ONLY"</summary>
     [JsonPropertyName("kind")]
-    public string Kind { get; set; } = string.Empty; // ANSWER_ONLY | EXECUTION
+    public string Kind { get; set; } = string.Empty;
+
+    /// <summary>"SUCCESS" | "PARTIAL_SUCCESS" | "FAILED" | "NOT_EXECUTED" | "STOPPED"</summary>
+    [JsonPropertyName("status")]
+    public string Status { get; set; } = string.Empty;
 
     [JsonPropertyName("answerText")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? AnswerText { get; set; }
 
-    [JsonPropertyName("execution")]
-    public AskExecutionResultStub? Execution { get; set; } = new();
+    /// <summary>
+    /// Ordered list of per-target execution results.
+    /// Successful targets include null-stripped result rows.
+    /// Failed targets include a single error row.
+    /// </summary>
+    [JsonPropertyName("items")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public List<AskExecutionItem>? Items { get; set; }
+
+    [JsonPropertyName("summary")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public AskExecutionSummary? Summary { get; set; }
 }
 
-public sealed class AskExecutionResultStub
+public sealed class AskExecutionItem
 {
+    [JsonPropertyName("target")]
+    public string Target { get; set; } = string.Empty;
+
+    /// <summary>"SUCCESS" | "FAILED"</summary>
     [JsonPropertyName("status")]
-    public string Status { get; set; } = "NOT_EXECUTED";
+    public string Status { get; set; } = string.Empty;
+
+    [JsonPropertyName("rowCount")]
+    public int RowCount { get; set; }
+
+    [JsonPropertyName("rows")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public List<Dictionary<string, object?>>? Rows { get; set; }
+}
+
+public sealed class AskExecutionSummary
+{
+    [JsonPropertyName("successCount")]
+    public int SuccessCount { get; set; }
+
+    [JsonPropertyName("failCount")]
+    public int FailCount { get; set; }
+
+    [JsonPropertyName("totalRowCount")]
+    public int TotalRowCount { get; set; }
+
+    [JsonPropertyName("durationMs")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public long DurationMs { get; set; }
+}
+
+/// <summary>Tracks one execution/repair attempt for the retryAttempts JSON node.</summary>
+public sealed class AskRetryAttempt
+{
+    [JsonPropertyName("attempt")]
+    public int Attempt { get; set; }
+
+    [JsonPropertyName("target")]
+    public string Target { get; set; } = string.Empty;
+
+    /// <summary>"EXECUTE" | "REPAIR"</summary>
+    [JsonPropertyName("phase")]
+    public string Phase { get; set; } = string.Empty;
+
+    [JsonPropertyName("scriptHash")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? ScriptHash { get; set; }
+
+    [JsonPropertyName("scriptPreview")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? ScriptPreview { get; set; }
+
+    /// <summary>"SUCCESS" | "FAILED" | "BLOCKED"</summary>
+    [JsonPropertyName("status")]
+    public string Status { get; set; } = string.Empty;
+
+    /// <summary>"SYNTAX" | "CONNECTION" | null</summary>
+    [JsonPropertyName("errorType")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? ErrorType { get; set; }
+
+    [JsonPropertyName("errorMessage")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? ErrorMessage { get; set; }
+
+    [JsonPropertyName("repairedByLlm")]
+    public bool RepairedByLlm { get; set; }
+
+    [JsonPropertyName("tsUtc")]
+    public string TsUtc { get; set; } = string.Empty;
+}
+
+/// <summary>LLM-generated explanation produced after script execution.</summary>
+public sealed class AskAnswerNode
+{
+    /// <summary>"OK" | "PARTIAL" | "FAILED"</summary>
+    [JsonPropertyName("status")]
+    public string Status { get; set; } = string.Empty;
+
+    /// <summary>"CRITICAL" | "WARNING" | "INFO" | "OK" | "UNKNOWN"</summary>
+    [JsonPropertyName("severity")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Severity { get; set; }
+
+    [JsonPropertyName("model")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public AskModelRef? Model { get; set; }
+
+    /// <summary>Human-readable highlight strings for UI summary strip.</summary>
+    [JsonPropertyName("highlights")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string[]? Highlights { get; set; }
+
+    [JsonPropertyName("explanation")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Explanation { get; set; }
+
+    [JsonPropertyName("anomaly")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Anomaly { get; set; }
+
+    [JsonPropertyName("analysis")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Analysis { get; set; }
+
+    [JsonPropertyName("suggestion")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Suggestion { get; set; }
 }

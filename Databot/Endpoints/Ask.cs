@@ -1,5 +1,6 @@
 using Application.Common.Interfaces;
 using Application.Common.Models;
+using Infrastructure.Services;
 using Microsoft.AspNetCore.Http.HttpResults;
 
 namespace Databot.Endpoints;
@@ -12,14 +13,14 @@ public sealed class Ask : EndpointGroupBase
     {
         builder.MapPost(HandleAsync)
             .WithSummary("Ask Databot")
-            .WithDescription("Runs tune -> template lookup -> generate pipeline.")
+            .WithDescription("Runs tune -> generate -> execute (with autofix + consolidation).")
             .Produces<AskApiResponse>()
             .ProducesValidationProblem();
 
-        builder.MapPost(HandleExecuteAsync, "execute")
-            .WithSummary("Execute generated script with autofix and consolidation")
-            .WithDescription("Runs execute + autofix + retry + consolidate across targets.")
-            .Produces<ScriptExecutionResponse>()
+        builder.MapPost(HandleStreamAsync, "stream")
+            .WithSummary("Ask Databot (SSE stream)")
+            .WithDescription("Streams pipeline phase events as Server-Sent Events. Terminal 'final' event contains the full AskApiResponse.")
+            .Produces(200, contentType: "text/event-stream")
             .ProducesValidationProblem();
     }
 
@@ -29,90 +30,78 @@ public sealed class Ask : EndpointGroupBase
         ILogger<Ask> logger,
         CancellationToken cancellationToken)
     {
-        var validationErrors = Validate(request);
+        var validationErrors = AskRequestValidator.ValidateAsk(request);
         if (validationErrors.Count > 0)
             return TypedResults.ValidationProblem(validationErrors);
 
         logger.LogInformation(
-            "Received /api/ask request. ConversationId={ConversationId}, UserId={UserId}, Environment={Environment}",
+            "Received /api/ask request. ConversationId={ConversationId}, BearerToken={BearerToken}, Environment={Environment}",
             request.ConversationId,
-            request.UserId,
+            request.BearerToken,
             request.Environment);
 
         var response = await pipeline.ExecuteAsync(request, cancellationToken);
         return TypedResults.Ok(response);
     }
 
-    private static async Task<Results<Ok<ScriptExecutionResponse>, ValidationProblem>> HandleExecuteAsync(
-        ScriptExecutionRequest request,
-        IScriptAutoFixOrchestrator orchestrator,
+    private static async Task HandleStreamAsync(
+        AskApiRequest request,
+        IAskPipelineService pipeline,
+        HttpResponse httpResponse,
+        ILoggerFactory loggerFactory,
         CancellationToken cancellationToken)
     {
-        var validationErrors = ValidateExecute(request);
+        var logger = loggerFactory.CreateLogger<Ask>();
+        var validationErrors = AskRequestValidator.ValidateAsk(request);
         if (validationErrors.Count > 0)
-            return TypedResults.ValidationProblem(validationErrors);
-
-        var response = await orchestrator.ExecuteAsync(request, cancellationToken);
-        return TypedResults.Ok(response);
-    }
-
-    private static Dictionary<string, string[]> Validate(AskApiRequest request)
-    {
-        var errors = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
-
-        if (string.IsNullOrWhiteSpace(request.Environment))
-            errors["environment"] = ["Environment is required."];
-
-        if (!IsKnownEnvironment(request.Environment))
-            errors["environment"] = ["Environment must be General, SqlServer_*, or Windows_*."];
-
-        request.SelectedServers ??= [];
-        if (RequiresSelectedServers(request.Environment) && request.SelectedServers.Length == 0)
         {
-            errors["selectedServers"] =
-            [
-                "selectedServers must contain at least one value when environment starts with SqlServer_ or Windows_."
-            ];
+            httpResponse.StatusCode = 400;
+            await httpResponse.WriteAsJsonAsync(validationErrors, cancellationToken);
+            return;
         }
 
-        return errors;
-    }
+        logger.LogInformation(
+            "Received /api/ask/stream request. ConversationId={ConversationId}, BearerToken={BearerToken}, Environment={Environment}",
+            request.ConversationId,
+            request.BearerToken,
+            request.Environment);
 
-    private static bool RequiresSelectedServers(string environment)
-    {
-        return environment.StartsWith("SqlServer_", StringComparison.OrdinalIgnoreCase)
-               || environment.StartsWith("Windows_", StringComparison.OrdinalIgnoreCase);
-    }
+        // SSE headers — must be set before first write.
+        httpResponse.Headers.ContentType = "text/event-stream";
+        httpResponse.Headers.CacheControl = "no-cache";
+        httpResponse.Headers.Append("X-Accel-Buffering", "no");
+        httpResponse.Headers.Append("Connection", "keep-alive");
 
-    private static bool IsKnownEnvironment(string environment)
-    {
-        return string.Equals(environment, "General", StringComparison.OrdinalIgnoreCase)
-               || environment.StartsWith("SqlServer_", StringComparison.OrdinalIgnoreCase)
-               || environment.StartsWith("Windows_", StringComparison.OrdinalIgnoreCase);
-    }
+        // Disable response buffering so Kestrel flushes each event immediately.
+        var bodyFeature = httpResponse.HttpContext.Features.Get<Microsoft.AspNetCore.Http.Features.IHttpResponseBodyFeature>();
+        bodyFeature?.DisableBuffering();
 
-    private static Dictionary<string, string[]> ValidateExecute(ScriptExecutionRequest request)
-    {
-        var errors = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
-        if (string.IsNullOrWhiteSpace(request.Environment))
-            errors["environment"] = ["Environment is required."];
+        var sseLogger = loggerFactory.CreateLogger<SseProgressStream>();
+        var progress = new SseProgressStream(
+            httpResponse,
+            request.ConversationId ?? string.Empty,
+            request.BearerToken ?? string.Empty,
+            sseLogger);
 
-        if (!request.Environment.StartsWith("SqlServer_", StringComparison.OrdinalIgnoreCase) &&
-            !request.Environment.StartsWith("Windows_", StringComparison.OrdinalIgnoreCase))
+        try
         {
-            errors["environment"] = ["Environment must be SqlServer_* or Windows_*."];
+            await pipeline.ExecuteWithProgressAsync(request, progress, cancellationToken);
         }
-
-        request.SelectedServers ??= [];
-        if (request.SelectedServers.Length == 0)
-            errors["selectedServers"] = ["selectedServers must contain at least one target."];
-
-        if (string.IsNullOrWhiteSpace(request.ScriptLanguage))
-            errors["scriptLanguage"] = ["scriptLanguage is required (SQL or PS)."];
-
-        if (string.IsNullOrWhiteSpace(request.GeneratedScript))
-            errors["generatedScript"] = ["generatedScript is required."];
-
-        return errors;
+        catch (OperationCanceledException)
+        {
+            // Client disconnected — silent exit.
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "SSE pipeline failed. ConversationId={ConversationId}", request.ConversationId);
+            try
+            {
+                await progress.EmitAsync(ProgressEvent.Error($"Pipeline failed: {ex.Message}"), cancellationToken);
+            }
+            catch
+            {
+                // Best effort — client may already be gone.
+            }
+        }
     }
 }

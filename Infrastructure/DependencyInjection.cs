@@ -41,15 +41,22 @@ public static class DependencyInjection
 
         builder.Services.AddScoped<SeedingService>();
 
+        builder.Services.AddSingleton<IRequestPolicyService, RequestPolicyService>();
         builder.Services.AddScoped<IAskPipelineService, AskPipelineService>();
         builder.Services.AddScoped<IScriptAutoFixOrchestrator, ScriptAutoFixOrchestrator>();
         builder.Services.AddScoped<ScriptSafetyScanner>();
+        builder.Services.AddScoped<IScriptValidationService, ScriptValidationService>();
+        builder.Services.AddScoped<IScriptRepairService, ScriptRepairService>();
         builder.Services.AddScoped<ISqlExecutor, SqlExecutor>();
         builder.Services.AddScoped<IPowerShellExecutor, PowerShellExecutor>();
         builder.Services.AddSingleton<IModelSelector, HardcodedModelSelector>();
-        builder.Services.AddSingleton<IToolRegistryResolver, StubToolRegistryResolver>();
+        builder.Services.AddScoped<IToolRegistrySqlRepository, ToolRegistrySqlRepository>();
+        builder.Services.AddScoped<IToolRegistryResolver, ToolRegistryResolver>();
+        builder.Services.AddSingleton<ITemplateRenderer, TemplateRenderer>();
         builder.Services.AddSingleton<ILLMClient, GeminiClient>();
         builder.Services.AddSingleton<ILLMClient, OpenAiClient>();
+        builder.Services.AddSingleton<ILLMClient, ClaudeClient>();
+        builder.Services.AddHttpClient("Claude");
 
         builder.Services.AddSingleton<KernelFactory>();
         builder.Services.AddSingleton<SkPromptRunner>();

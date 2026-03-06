@@ -7,4 +7,13 @@ public interface IScriptAutoFixOrchestrator
     Task<ScriptExecutionResponse> ExecuteAsync(
         ScriptExecutionRequest request,
         CancellationToken cancellationToken);
+
+    Task<ScriptExecutionResponse> ExecuteWithAutoFixAsync(
+        ScriptExecutionRequest request,
+        CancellationToken cancellationToken);
+
+    Task<ScriptExecutionResponse> ExecuteWithAutoFixAsync(
+        ScriptExecutionRequest request,
+        IProgressStream? progress,
+        CancellationToken cancellationToken);
 }

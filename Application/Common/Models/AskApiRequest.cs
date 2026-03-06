@@ -10,8 +10,8 @@ public sealed class AskApiRequest
     [JsonPropertyName("conversationId")]
     public string ConversationId { get; set; } = string.Empty;
 
-    [JsonPropertyName("userId")]
-    public string UserId { get; set; } = string.Empty;
+    [JsonPropertyName("BearerToken")]
+    public string BearerToken { get; set; } = string.Empty;
 
     [JsonPropertyName("environment")]
     public string Environment { get; set; } = string.Empty;
@@ -19,6 +19,10 @@ public sealed class AskApiRequest
     [JsonPropertyName("question")]
     public string Question { get; set; } = string.Empty;
 
+    [JsonPropertyName("selectedTargets")]
+    public string[] SelectedTargets { get; set; } = [];
+
+    /// <summary>Legacy key — clients that still send "selectedServers" are silently remapped to SelectedTargets.</summary>
     [JsonPropertyName("selectedServers")]
-    public string[] SelectedServers { get; set; } = [];
+    public string[]? SelectedServers { get; set; }
 }

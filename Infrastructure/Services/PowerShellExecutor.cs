@@ -49,9 +49,14 @@ internal sealed class PowerShellExecutor(
             var stderr = await errorTask;
             var exitCode = process.ExitCode;
 
-            if (exitCode != 0 || !string.IsNullOrWhiteSpace(stderr))
+            // PowerShell writes CLIXML progress/status notifications to stderr during
+            // remote Invoke-Command (module loading etc.) even on success.
+            // Strip those before deciding whether it's a real error.
+            var meaningfulStderr = StripCliXmlProgressNoise(stderr);
+
+            if (exitCode != 0 || !string.IsNullOrWhiteSpace(meaningfulStderr))
             {
-                var error = BuildPowerShellError(exitCode, stderr, stdout);
+                var error = BuildPowerShellError(exitCode, meaningfulStderr, stdout);
                 return new ExecutorRunResult
                 {
                     Server = server,
@@ -111,7 +116,7 @@ internal sealed class PowerShellExecutor(
             "$scriptBlock = [ScriptBlock]::Create(@'" + Environment.NewLine +
             (script ?? string.Empty) + Environment.NewLine +
             "'@)" + Environment.NewLine +
-            $"$result = Invoke-Command -ComputerName '{safeServer}' -ScriptBlock $scriptBlock -ErrorAction Stop" + Environment.NewLine +
+            $"$result = Invoke-Command -ComputerName '{safeServer}' -ScriptBlock $scriptBlock -ArgumentList '{safeServer}' -ErrorAction Stop" + Environment.NewLine +
             "if ($null -eq $result) {" + Environment.NewLine +
             "  '[]'" + Environment.NewLine +
             "} else {" + Environment.NewLine +
@@ -162,6 +167,10 @@ internal sealed class PowerShellExecutor(
         }
     }
 
+    // PowerShell remoting injects these onto every output object — strip them from rows.
+    private static readonly HashSet<string> PsRemotingFields =
+        new(StringComparer.OrdinalIgnoreCase) { "PSComputerName", "RunspaceId", "PSShowComputerName" };
+
     private static Dictionary<string, object?> ToRow(JsonElement element)
     {
         if (element.ValueKind != JsonValueKind.Object)
@@ -174,7 +183,12 @@ internal sealed class PowerShellExecutor(
 
         var row = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
         foreach (var property in element.EnumerateObject())
+        {
+            if (PsRemotingFields.Contains(property.Name))
+                continue;
+
             row[property.Name] = ToObject(property.Value);
+        }
         return row;
     }
 
@@ -189,10 +203,30 @@ internal sealed class PowerShellExecutor(
             JsonValueKind.False => false,
             JsonValueKind.Null => null,
             JsonValueKind.Array => element.EnumerateArray().Select(ToObject).ToList(),
-            JsonValueKind.Object => element.EnumerateObject()
-                .ToDictionary(x => x.Name, x => ToObject(x.Value), StringComparer.OrdinalIgnoreCase),
+            JsonValueKind.Object => NormalizePsObject(element),
             _ => element.ToString()
         };
+    }
+
+    /// <summary>
+    /// Flattens PowerShell-serialized objects.
+    /// ConvertTo-Json renders Get-Date as {"value":"/Date(.../","DisplayHint":{...},"DateTime":"Wednesday..."}.
+    /// We extract just the "DateTime" display string in that case.
+    /// </summary>
+    private static object? NormalizePsObject(JsonElement element)
+    {
+        // PowerShell DateTime pattern: object has "value" starting with "/Date(" and a "DateTime" string.
+        if (element.TryGetProperty("value", out var valueProp)
+            && valueProp.ValueKind == JsonValueKind.String
+            && (valueProp.GetString() ?? string.Empty).StartsWith("/Date(", StringComparison.Ordinal)
+            && element.TryGetProperty("DateTime", out var dtProp)
+            && dtProp.ValueKind == JsonValueKind.String)
+        {
+            return dtProp.GetString();
+        }
+
+        return element.EnumerateObject()
+            .ToDictionary(x => x.Name, x => ToObject(x.Value), StringComparer.OrdinalIgnoreCase);
     }
 
     private static void InjectServerIfMissing(List<Dictionary<string, object?>> rows, string server)
@@ -200,12 +234,34 @@ internal sealed class PowerShellExecutor(
         if (rows.Count == 0)
             return;
 
-        var hasServer = rows.Any(r => r.Keys.Any(k => string.Equals(k, "Server", StringComparison.OrdinalIgnoreCase)));
-        if (hasServer)
-            return;
-
         foreach (var row in rows)
-            row["Server"] = server;
+        {
+            if (!row.Keys.Any(k => string.Equals(k, "ServerName", StringComparison.OrdinalIgnoreCase)))
+            {
+                var existingServer = row.FirstOrDefault(kv => string.Equals(kv.Key, "Server", StringComparison.OrdinalIgnoreCase));
+                row["ServerName"] = existingServer.Value ?? server;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Removes the CLIXML progress/status block that PowerShell writes to stderr during
+    /// remote Invoke-Command execution (module preparation etc.).  These are informational
+    /// only and must not be treated as errors when ExitCode is 0.
+    /// </summary>
+    private static string StripCliXmlProgressNoise(string stderr)
+    {
+        if (string.IsNullOrWhiteSpace(stderr))
+            return string.Empty;
+
+        // Pattern: "#< CLIXML\n<Objs ...>...</Objs>"
+        var stripped = System.Text.RegularExpressions.Regex.Replace(
+            stderr,
+            @"#<\s*CLIXML\s*\r?\n<Objs[\s\S]*?</Objs>",
+            string.Empty,
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase).Trim();
+
+        return stripped;
     }
 
     private static string BuildPowerShellError(int exitCode, string stderr, string stdout)

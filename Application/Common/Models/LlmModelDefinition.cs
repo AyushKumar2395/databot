@@ -24,4 +24,6 @@ public sealed class LlmModelDefinition
     public bool UseForRepair { get; init; }
     public bool UseForExplain { get; init; }
     public int? RetryCount { get; init; }
+
+  public int? Generator { get; init; }
 }
