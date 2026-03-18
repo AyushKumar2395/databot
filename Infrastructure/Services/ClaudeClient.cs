@@ -41,9 +41,11 @@ public sealed class ClaudeClient(
         string environmentTag,
         string routedQueryCode,
         string modelKey,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? apiKey = null)
     {
-        if (string.IsNullOrWhiteSpace(_llmOptions.Claude.ApiKey))
+        var effectiveKey = ResolveApiKey(apiKey);
+        if (string.IsNullOrWhiteSpace(effectiveKey))
         {
             _logger.LogWarning(
                 "Claude API key is not configured. Using deterministic tuning mock for model {ModelKey}.",
@@ -61,7 +63,7 @@ public sealed class ClaudeClient(
         try
         {
             _logger.LogInformation("Using Claude tuning model {ModelKey}.", modelKey);
-            var result = await CallClaudeAsync(prompt, modelKey, cancellationToken);
+            var result = await CallClaudeAsync(prompt, modelKey, effectiveKey, cancellationToken);
             return string.IsNullOrWhiteSpace(result)
                 ? MockLlmBehavior.BuildTuneLine(rawQuestion, environmentTag, routedQueryCode ?? string.Empty)
                 : result;
@@ -81,9 +83,11 @@ public sealed class ClaudeClient(
         string tunedQuestion,
         string environmentTag,
         string modelKey,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? apiKey = null)
     {
-        if (string.IsNullOrWhiteSpace(_llmOptions.Claude.ApiKey))
+        var effectiveKey = ResolveApiKey(apiKey);
+        if (string.IsNullOrWhiteSpace(effectiveKey))
         {
             _logger.LogWarning(
                 "Claude API key is not configured. Using deterministic generate mock for model {ModelKey}.",
@@ -100,7 +104,7 @@ public sealed class ClaudeClient(
         try
         {
             _logger.LogInformation("Using Claude generate model {ModelKey}.", modelKey);
-            var result = await CallClaudeAsync(prompt, modelKey, cancellationToken);
+            var result = await CallClaudeAsync(prompt, modelKey, effectiveKey, cancellationToken);
             return string.IsNullOrWhiteSpace(result)
                 ? MockLlmBehavior.BuildGenerateScript(environmentTag, tunedQuestion)
                 : result;
@@ -120,9 +124,11 @@ public sealed class ClaudeClient(
         string tunedQuestion,
         string environmentTag,
         string modelKey,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? apiKey = null)
     {
-        if (string.IsNullOrWhiteSpace(_llmOptions.Claude.ApiKey))
+        var effectiveKey = ResolveApiKey(apiKey);
+        if (string.IsNullOrWhiteSpace(effectiveKey))
         {
             _logger.LogWarning(
                 "Claude API key is not configured. Using deterministic template-validate mock for model {ModelKey}.",
@@ -139,7 +145,7 @@ public sealed class ClaudeClient(
         try
         {
             _logger.LogInformation("Using Claude validate model {ModelKey}.", modelKey);
-            var result = await CallClaudeAsync(prompt, modelKey, cancellationToken);
+            var result = await CallClaudeAsync(prompt, modelKey, effectiveKey, cancellationToken);
             return string.IsNullOrWhiteSpace(result)
                 ? MockLlmBehavior.BuildValidateTemplateJson(environmentTag, tunedQuestion, promptTemplate)
                 : result;
@@ -164,12 +170,12 @@ public sealed class ClaudeClient(
         });
     }
 
-    private async Task<string> CallClaudeAsync(string prompt, string modelKey, CancellationToken ct)
+    private async Task<string> CallClaudeAsync(string prompt, string modelKey, string resolvedApiKey, CancellationToken ct)
     {
         var client = _httpClientFactory.CreateClient("Claude");
 
         using var request = new HttpRequestMessage(HttpMethod.Post, MessagesEndpoint);
-        request.Headers.Add("x-api-key", _llmOptions.Claude.ApiKey);
+        request.Headers.Add("x-api-key", resolvedApiKey);
         request.Headers.Add("anthropic-version", AnthropicVersion);
 
         var body = new
@@ -193,4 +199,8 @@ public sealed class ClaudeClient(
             .GetProperty("text")
             .GetString() ?? string.Empty;
     }
+
+    /// <summary>Prefer DB key, fall back to appsettings.</summary>
+    private string? ResolveApiKey(string? dbKey) =>
+        !string.IsNullOrWhiteSpace(dbKey) ? dbKey : _llmOptions.Claude.ApiKey;
 }

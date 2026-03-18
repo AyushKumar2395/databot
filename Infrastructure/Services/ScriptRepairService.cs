@@ -44,7 +44,8 @@ internal sealed class ScriptRepairService(
             tunedQuestion,
             environment,
             model.ModelKey,
-            ct);
+            ct,
+            apiKey: model.ApiKeyEncrypted);
 
         // Strip code fences if LLM wrapped the output
         repaired = StripCodeFences(repaired ?? string.Empty);

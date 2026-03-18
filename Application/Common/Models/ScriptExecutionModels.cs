@@ -18,6 +18,14 @@ public sealed class ScriptExecutionRequest
 
     [JsonPropertyName("generatedScript")]
     public string GeneratedScript { get; set; } = string.Empty;
+
+    /// <summary>When false, the orchestrator skips LLM repair attempts on validation failure. Default true.</summary>
+    [JsonPropertyName("allowRepair")]
+    public bool AllowRepair { get; set; } = true;
+
+    /// <summary>When true, the orchestrator skips the safety scanner. Used for curated sample scripts from the DB.</summary>
+    [JsonPropertyName("skipSafetyScanning")]
+    public bool SkipSafetyScanning { get; set; }
 }
 
 public sealed class ScriptExecutionResponse

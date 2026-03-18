@@ -21,6 +21,9 @@ public sealed class RequestPolicyServiceTests
     [InlineData("SqlServer_Live", "List databases larger than 10GB")]
     [InlineData("SqlServer_Live", "Check if backup completed successfully")]
     [InlineData("SqlServer_Live", "What is the status of database backups?")]
+    [InlineData("SqlServer_Live", "search error log for I/O")]
+    [InlineData("SqlServer_Live", "search error log for backup")]
+    [InlineData("SqlServer_Live", "check error log for restart events")]
     [InlineData("Windows_Live", "Check disk space on all drives")]
     [InlineData("Windows_Live", "List all running processes")]
     [InlineData("Windows_Live", "When was the server last rebooted?")]
@@ -91,10 +94,8 @@ public sealed class RequestPolicyServiceTests
     [InlineData("SqlServer_Live", "check logs for restart")]
     [InlineData("SqlServer_Live", "service status")]
     [InlineData("Windows_Live", "server restarted when?")]
-    [InlineData("Windows_Live", "check error log")]
     [InlineData("Windows_Live", "when was the service restarted?")]
     [InlineData("Windows_Live", "check if the server was restarted in the last 24 hours")]
-    [InlineData("SqlServer_Live", "check error log for restart events")]
     public void NeedsClarification_Ambiguous_Questions(string env, string question)
     {
         var decision = Evaluate(env, question);
@@ -196,6 +197,29 @@ public sealed class RequestPolicyServiceTests
     }
 
     // ── Helper ──────────────────────────────────────────────────────────────
+
+    // ─── History environments skip env-intent gate, allow read-only ─────────
+
+    [Theory]
+    [InlineData("SqlServer_History", "show PLE trend last 24 hours")]
+    [InlineData("SqlServer_History", "search error log for backup")]
+    [InlineData("SqlServer_History", "show CPU trend")]
+    [InlineData("Windows_History", "show CPU trend last 6 hours")]
+    [InlineData("Windows_History", "show disk queue length")]
+    public void Allow_History_ReadOnly_Questions(string env, string question)
+    {
+        var decision = Evaluate(env, question);
+        Assert.True(decision.Allowed, $"Expected ALLOW for '{question}' in {env}, got: {decision.ReasonCode} - {decision.Message}");
+    }
+
+    [Theory]
+    [InlineData("SqlServer_History", "drop table monitoring_data")]
+    [InlineData("SqlServer_History", "backup database SQLGig")]
+    public void Block_History_Dangerous_Questions(string env, string question)
+    {
+        var decision = Evaluate(env, question);
+        Assert.False(decision.Allowed, $"Expected BLOCKED for '{question}' in {env}");
+    }
 
     private PolicyDecision Evaluate(string env, string question)
     {

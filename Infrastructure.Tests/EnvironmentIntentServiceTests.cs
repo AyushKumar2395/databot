@@ -26,6 +26,7 @@ public sealed class EnvironmentIntentServiceTests
     [InlineData("Windows_Live", "show deadlock history from sys.dm_exec_requests and blocking")]
     [InlineData("Windows_Live", "show database backup history from msdb backupset")]
     [InlineData("Windows_Live", "check sql agent job history in msdb for failed stored procedure")]
+    [InlineData("Windows_Live", "check error log for errors")]
     public void Block_Mismatch_Sql_Question_In_Windows_Env(string env, string question)
     {
         var result = EnvironmentIntentService.Evaluate(question, env);
@@ -41,7 +42,6 @@ public sealed class EnvironmentIntentServiceTests
     [InlineData("SqlServer_Live", "check logs for restart")]
     [InlineData("SqlServer_Live", "service status")]
     [InlineData("Windows_Live", "server restarted when?")]
-    [InlineData("Windows_Live", "check error log")]
     [InlineData("Windows_Live", "service status")]
     public void NeedsClarification_Ambiguous_Questions(string env, string question)
     {
@@ -67,7 +67,8 @@ public sealed class EnvironmentIntentServiceTests
     [Fact]
     public void Clarification_For_Log_Mentions_EventLog_vs_Errorlog()
     {
-        var result = EnvironmentIntentService.Evaluate("check error log", "SqlServer_Live");
+        // "check logs for errors" has only ambiguous terms (log + error), no "error log" compound.
+        var result = EnvironmentIntentService.Evaluate("check logs for errors", "SqlServer_Live");
         Assert.Contains("Event Log", result.Message!, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("Windows", result.Suggestion1!);
         Assert.Contains("SQL", result.Suggestion2!);
@@ -91,6 +92,22 @@ public sealed class EnvironmentIntentServiceTests
     [InlineData("SqlServer_Live", "show failed agent job history")]
     [InlineData("SqlServer_Live", "list all databases larger than 10gb")]
     [InlineData("SqlServer_Live", "check deadlock graph from sys.dm_exec_requests")]
+    [InlineData("SqlServer_Live", "search error log for I/O")]
+    [InlineData("SqlServer_Live", "search error log for backup")]
+    [InlineData("SqlServer_Live", "check error log for errors last 24 hours")]
+    [InlineData("SqlServer_Live", "List Windows group logins only.")]
+    [InlineData("SqlServer_Live", "Show logins with default database that is missing or offline.")]
+    [InlineData("SqlServer_Live", "List SQL logins where password policy is OFF.")]
+    [InlineData("SqlServer_Live", "Show sysadmin role members.")]
+    [InlineData("SqlServer_Live", "List disabled logins only.")]
+    [InlineData("SqlServer_Live", "Show logins created in the last 30 days.")]
+    [InlineData("SqlServer_Live", "Show login count by type.")]
+    [InlineData("SqlServer_Live", "List all versions, and tell is al uptodate with latest patch")]
+    [InlineData("SqlServer_Live", "Show the current cumulative update level")]
+    [InlineData("SqlServer_Live", "What SQL Server edition and version is installed?")]
+    [InlineData("SqlServer_Live", "Show database file sizes and growth settings")]
+    [InlineData("SqlServer_Live", "List all trace flags enabled")]
+    [InlineData("SqlServer_Live", "Show server configuration options")]
     public void Allow_SqlServer_Questions_In_SqlServer_Env(string env, string question)
     {
         var result = EnvironmentIntentService.Evaluate(question, env);
@@ -112,27 +129,52 @@ public sealed class EnvironmentIntentServiceTests
         Assert.True(result.IsAllowed, $"Expected ALLOW for '{question}' in {env}, got {result.Verdict}: {result.Message}");
     }
 
-    // ── Must ALLOW when no signal at all ────────────────────────────────────
+    // ── Must BLOCK when question has NO relevance to the environment ────────
 
     [Theory]
     [InlineData("SqlServer_Live", "what happened yesterday")]
+    [InlineData("SqlServer_Live", "what is the weather today?")]
+    [InlineData("SqlServer_Live", "tell me a joke")]
+    [InlineData("SqlServer_Live", "how to cook pasta")]
+    [InlineData("SqlServer_Live", "who won the world cup?")]
     [InlineData("Windows_Live", "what happened yesterday")]
-    public void Allow_When_No_EnvironmentSignal(string env, string question)
+    [InlineData("Windows_Live", "who is the president?")]
+    [InlineData("Windows_Live", "what is 2+2")]
+    [InlineData("Windows_Live", "explain quantum physics")]
+    public void Block_NoRelevance_Irrelevant_Questions(string env, string question)
     {
         var result = EnvironmentIntentService.Evaluate(question, env);
-        Assert.True(result.IsAllowed, $"Expected ALLOW for '{question}' in {env}, got {result.Verdict}");
+        Assert.True(result.IsMismatch,
+            $"Expected BLOCK for irrelevant '{question}' in {env}, got {result.Verdict}");
+        Assert.Contains("doesn't appear to be related", result.Message!);
+        Assert.NotNull(result.Alternatives);
     }
 
-    // ── Single ambiguous term should ALLOW, not trigger clarification ───────
+    // ── Relevance keywords should ALLOW (broad domain match) ────────────────
+
+    [Theory]
+    [InlineData("SqlServer_Live", "show me query performance")]
+    [InlineData("SqlServer_Live", "check the transaction log")]
+    [InlineData("Windows_Live", "show stopped services")]
+    [InlineData("Windows_Live", "check cpu usage")]
+    [InlineData("Windows_Live", "list open ports")]
+    public void Allow_When_RelevanceKeyword_Present(string env, string question)
+    {
+        var result = EnvironmentIntentService.Evaluate(question, env);
+        Assert.True(result.IsAllowed,
+            $"Expected ALLOW for '{question}' in {env}, got {result.Verdict}: {result.Message}");
+    }
+
+    // ── Single ambiguous term with no relevance → blocked ─────────────────
 
     [Theory]
     [InlineData("SqlServer_Live", "show status")]
-    [InlineData("Windows_Live", "show stopped services")]
-    [InlineData("Windows_Live", "server uptime")]
-    public void Allow_Single_Ambiguous_Term_Does_Not_Trigger_Clarification(string env, string question)
+    [InlineData("SqlServer_Live", "check health")]
+    public void Block_NoRelevance_VagueQuestion_In_SqlServer(string env, string question)
     {
         var result = EnvironmentIntentService.Evaluate(question, env);
-        Assert.True(result.IsAllowed, $"Expected ALLOW for '{question}' in {env}, got {result.Verdict}: {result.Message}");
+        Assert.True(result.IsMismatch,
+            $"Expected BLOCK for vague '{question}' in {env}, got {result.Verdict}");
     }
 
     // ── Mixed signals: both SQL and Windows present → NEEDS_CLARIFICATION ───

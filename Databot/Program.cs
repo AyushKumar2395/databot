@@ -37,11 +37,31 @@ else
     app.Logger.LogInformation("Database initialization is disabled (Database:EnableInitialization=false).");
 }
 
-app.UseHttpsRedirection();
+app.UseCors(); // CORS must be FIRST — before HTTPS redirect, before exception handler
 
-app.UseExceptionHandler(_ => { });
+// Only redirect to HTTPS in production — in dev, UI connects via HTTP
+if (!app.Environment.IsDevelopment())
+    app.UseHttpsRedirection();
+
+app.UseExceptionHandler(appBuilder =>
+{
+    appBuilder.Run(async context =>
+    {
+        var logger = context.RequestServices.GetRequiredService<ILogger<Program>>();
+        var exception = context.Features.Get<Microsoft.AspNetCore.Diagnostics.IExceptionHandlerFeature>()?.Error;
+        logger.LogError(exception, "Unhandled exception on {Method} {Path}", context.Request.Method, context.Request.Path);
+        context.Response.StatusCode = 500;
+        context.Response.ContentType = "application/json";
+        await context.Response.WriteAsync(System.Text.Json.JsonSerializer.Serialize(new
+        {
+            error = "Internal server error",
+            message = exception?.Message ?? "An unexpected error occurred."
+        }));
+    });
+});
 
 app.MapHub<AskHub>("/hubs/ask");
+app.MapHub<HeartbeatHub>("/hubs/heartbeat");
 app.MapEndpoints();
 
 app.Run();

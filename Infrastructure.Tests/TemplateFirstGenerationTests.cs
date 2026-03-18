@@ -244,7 +244,21 @@ public sealed class TemplateFirstGenerationTests
             resolver ?? new MissResolver(),
             new TemplateRenderer(NullLogger<TemplateRenderer>.Instance),
             new AllowAllPolicyService(),
+            new StubSamplesRepo(),
+            new TestHelpers.EmptyUserServerRepository(),
             NullLogger<AskPipelineService>.Instance);
+    }
+
+    private sealed class StubSamplesRepo : IQuestionSamplesRepository
+    {
+        public Task<List<QuestionSampleRow>> GetByEnvironmentAsync(string environment, CancellationToken ct)
+            => Task.FromResult(new List<QuestionSampleRow>());
+
+        public Task<QuestionSampleRow?> GetByIdAsync(int sampleId, string environment, CancellationToken ct)
+            => Task.FromResult<QuestionSampleRow?>(null);
+
+        public Task<QuestionSampleRow?> GetByGroupKeyAsync(string groupKey, string environment, CancellationToken ct)
+            => Task.FromResult<QuestionSampleRow?>(null);
     }
 
     // ── Model selectors ───────────────────────────────────────────────────────
@@ -349,7 +363,8 @@ public sealed class TemplateFirstGenerationTests
 
         public Task<string> TuneAsync(
             string promptTemplate, string rawQuestion, string environmentTag,
-            string routedQueryCode, string modelKey, CancellationToken cancellationToken)
+            string routedQueryCode, string modelKey, CancellationToken cancellationToken,
+            string? apiKey = null)
         {
             if (rawQuestion.Contains("restart server", StringComparison.OrdinalIgnoreCase))
                 return Task.FromResult($"BLOCKED: STATE_CHANGING_REQUEST||{routedQueryCode}");
@@ -362,7 +377,8 @@ public sealed class TemplateFirstGenerationTests
 
         public Task<string> GenerateAsync(
             string promptTemplate, string tunedQuestion, string environmentTag,
-            string modelKey, CancellationToken cancellationToken)
+            string modelKey, CancellationToken cancellationToken,
+            string? apiKey = null)
         {
             if (promptTemplate.Contains("DataBot Explain", StringComparison.Ordinal))
                 return Task.FromResult("""{"explanation":"Done.","anomaly":null,"analysis":null,"suggestion":null}""");
@@ -384,7 +400,8 @@ $Result
 
         public Task<string> ValidateTemplateAsync(
             string promptTemplate, string tunedQuestion, string environmentTag,
-            string modelKey, CancellationToken cancellationToken) =>
+            string modelKey, CancellationToken cancellationToken,
+            string? apiKey = null) =>
             Task.FromResult("{}");
     }
 

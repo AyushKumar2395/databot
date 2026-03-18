@@ -14,19 +14,22 @@ public interface ILLMClient
         string environmentTag,
         string routedQueryCode,
         string modelKey,
-        CancellationToken cancellationToken);
+        CancellationToken cancellationToken,
+        string? apiKey = null);
 
     Task<string> GenerateAsync(
         string promptTemplate,
         string tunedQuestion,
         string environmentTag,
         string modelKey,
-        CancellationToken cancellationToken);
+        CancellationToken cancellationToken,
+        string? apiKey = null);
 
     Task<string> ValidateTemplateAsync(
         string promptTemplate,
         string tunedQuestion,
         string environmentTag,
         string modelKey,
-        CancellationToken cancellationToken);
+        CancellationToken cancellationToken,
+        string? apiKey = null);
 }

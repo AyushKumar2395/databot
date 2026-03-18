@@ -22,8 +22,14 @@ internal static class AskRequestValidator
         {
             errors["selectedTargets"] =
             [
-                "selectedTargets must contain at least one value when environment starts with SqlServer_ or Windows_."
+                "selectedTargets must contain at least one value for Live environments (SqlServer_Live or Windows_Live)."
             ];
+        }
+
+        if (request.SampleId.HasValue)
+        {
+            if (string.Equals(request.Environment, "General", StringComparison.OrdinalIgnoreCase))
+                errors["environment"] = ["Sample execution is not supported for General environment."];
         }
 
         return errors;
@@ -56,8 +62,17 @@ internal static class AskRequestValidator
 
     private static bool RequiresSelectedServers(string environment)
     {
+        // History environments run centrally on CTS03 — no selected servers needed.
+        if (IsHistory(environment)) return false;
         return environment.StartsWith("SqlServer_", StringComparison.OrdinalIgnoreCase)
                || environment.StartsWith("Windows_", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsHistory(string environment)
+    {
+        return environment.EndsWith("_History", StringComparison.OrdinalIgnoreCase)
+               && (environment.StartsWith("SqlServer_", StringComparison.OrdinalIgnoreCase)
+                   || environment.StartsWith("Windows_", StringComparison.OrdinalIgnoreCase));
     }
 
     private static bool IsKnownEnvironment(string environment)

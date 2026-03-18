@@ -120,10 +120,10 @@ SELECT @@SERVERNAME AS [Server];
     }
 
     [Fact]
-    public async Task Connection_Error_Does_Not_Trigger_Repair_And_Continues_To_Other_Targets()
+    public async Task Connection_Error_Falls_Through_All_Servers_Then_Executes()
     {
-        // Validation connection error on first target — no LLM repair
-        // Remaining targets execute successfully
+        // All servers return connection errors during validation — no LLM repair.
+        // Execution still proceeds on all servers (connection issue may be transient).
         var validator = new FakeValidationService((script, target) =>
             Task.FromResult(ScriptValidationResult.ConnectionError(
                 "A network-related or instance-specific error occurred. error: 40")));
@@ -143,17 +143,58 @@ SELECT @@SERVERNAME AS [Server];
             },
             CancellationToken.None);
 
-        // No LLM repair
+        // No LLM repair for connection errors
         Assert.Equal(0, llm.RepairCalls);
 
-        // First attempt classified as CONNECTION
+        // Validation attempt recorded as CONNECTION (all servers tried)
         Assert.Single(response.Attempts);
         Assert.Equal("CONNECTION", response.Attempts[0].ErrorType);
 
-        // All 3 targets present: CTS01 failed, CTS02 + CTS03 succeeded
+        // All 3 targets still executed (connection may have been transient)
         Assert.Equal(3, response.ResultsByServer.Count);
-        Assert.Equal(1, response.Summary.FailCount);
-        Assert.Equal(2, response.Summary.SuccessCount);
+        Assert.Equal(0, response.Summary.FailCount);
+        Assert.Equal(3, response.Summary.SuccessCount);
+    }
+
+    [Fact]
+    public async Task Connection_Error_On_First_Server_Falls_Through_To_Second_For_Validation()
+    {
+        // Server[0] has connection error, server[1] connects and validates successfully.
+        // All servers still execute.
+        var validator = new FakeValidationService((script, target) =>
+        {
+            if (string.Equals(target, "CTS01", StringComparison.OrdinalIgnoreCase))
+                return Task.FromResult(ScriptValidationResult.ConnectionError(
+                    "A network-related or instance-specific error occurred. error: 40"));
+            return Task.FromResult(ScriptValidationResult.Success());
+        });
+
+        var sql = new FakeSqlExecutor((server, script, _) => Task.FromResult(Success(server, script)));
+        var llm = new RecordingLlmClient();
+        var orchestrator = CreateOrchestrator(sql, new FakePowerShellExecutor(), llm, validator);
+
+        var response = await orchestrator.ExecuteAsync(
+            new ScriptExecutionRequest
+            {
+                Environment = "SqlServer_Live",
+                ScriptLanguage = "SQL",
+                TunedQuestion = "list databases",
+                SelectedServers = ["CTS01", "CTS02", "CTS03"],
+                GeneratedScript = "SELECT @@SERVERNAME AS [ServerName], GETDATE() AS [CapturedAt], name FROM sys.databases;"
+            },
+            CancellationToken.None);
+
+        // No LLM repair needed — validation passed on CTS02
+        Assert.Equal(0, llm.RepairCalls);
+
+        // Validation passed (on CTS02 after CTS01 connection error)
+        Assert.Single(response.Attempts);
+        Assert.Equal("SUCCESS", response.Attempts[0].Status);
+        Assert.Equal("CTS02", response.Attempts[0].Target);
+
+        // All 3 targets executed
+        Assert.Equal(3, response.ResultsByServer.Count);
+        Assert.Equal(3, response.Summary.SuccessCount);
     }
 
     [Fact]
@@ -529,12 +570,14 @@ SELECT @@SERVERNAME AS [Server];
 
         public Task<string> TuneAsync(
             string promptTemplate, string rawQuestion, string environmentTag,
-            string routedQueryCode, string modelKey, CancellationToken cancellationToken)
+            string routedQueryCode, string modelKey, CancellationToken cancellationToken,
+            string? apiKey = null)
             => Task.FromResult(string.Empty);
 
         public Task<string> GenerateAsync(
             string promptTemplate, string tunedQuestion, string environmentTag,
-            string modelKey, CancellationToken cancellationToken)
+            string modelKey, CancellationToken cancellationToken,
+            string? apiKey = null)
         {
             if (promptTemplate.Contains("DataBot Script Repair", StringComparison.OrdinalIgnoreCase))
             {
@@ -559,7 +602,8 @@ SELECT @@SERVERNAME AS [Server];
 
         public Task<string> ValidateTemplateAsync(
             string promptTemplate, string tunedQuestion, string environmentTag,
-            string modelKey, CancellationToken cancellationToken)
+            string modelKey, CancellationToken cancellationToken,
+            string? apiKey = null)
             => Task.FromResult(string.Empty);
     }
 

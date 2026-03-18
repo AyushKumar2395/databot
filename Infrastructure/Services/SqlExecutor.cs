@@ -31,7 +31,10 @@ internal sealed class SqlExecutor(
     public async Task<ExecutorRunResult> ExecuteAsync(string server, string script, CancellationToken cancellationToken)
     {
         var stopwatch = Stopwatch.StartNew();
-        var (displayServer, _, _) = ParseSqlInstanceToken(server);
+        var (_, _, connectionTarget) = ParseSqlInstanceToken(server);
+        // Use the full connection target as display name (e.g., "CTS03\CTSGlobal" or "CTS02,1432\ADMIN")
+        // so execution result items show the instance name, not just the hostname.
+        var displayServer = connectionTarget;
         try
         {
             var rows = new List<Dictionary<string, object?>>();
@@ -78,10 +81,25 @@ internal sealed class SqlExecutor(
                 Rows = rows
             };
         }
+        catch (SqlException ex) when (ex.Message.Contains("Operation cancelled", StringComparison.OrdinalIgnoreCase)
+                                   || ex.Message.Contains("operation was canceled", StringComparison.OrdinalIgnoreCase))
+        {
+            // Timeout/cancellation — log cleanly without stack trace
+            _logger.LogDebug("SQL query timed out on {Server} after {Ms}ms.", displayServer, stopwatch.ElapsedMilliseconds);
+            return new ExecutorRunResult
+            {
+                Server = displayServer,
+                Success = false,
+                IsRetryableCompileError = false,
+                Error = $"Query timed out after {stopwatch.ElapsedMilliseconds / 1000}s on {displayServer}.",
+                DurationMs = stopwatch.ElapsedMilliseconds,
+                Rows = []
+            };
+        }
         catch (SqlException ex)
         {
             var error = FormatSqlException(ex);
-            _logger.LogWarning(ex, "SQL execution failed on server {Server}.", server);
+            _logger.LogWarning("SQL execution failed on {Server}: {Error}", displayServer, error);
             return new ExecutorRunResult
             {
                 Server = displayServer,
@@ -92,9 +110,22 @@ internal sealed class SqlExecutor(
                 Rows = []
             };
         }
+        catch (OperationCanceledException)
+        {
+            _logger.LogDebug("SQL query cancelled on {Server} after {Ms}ms.", displayServer, stopwatch.ElapsedMilliseconds);
+            return new ExecutorRunResult
+            {
+                Server = displayServer,
+                Success = false,
+                IsRetryableCompileError = false,
+                Error = $"Query cancelled after {stopwatch.ElapsedMilliseconds / 1000}s on {displayServer}.",
+                DurationMs = stopwatch.ElapsedMilliseconds,
+                Rows = []
+            };
+        }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "SQL execution failed on server {Server}.", server);
+            _logger.LogWarning("SQL execution failed on {Server}: {Error}", displayServer, ex.Message);
             return new ExecutorRunResult
             {
                 Server = displayServer,
@@ -123,6 +154,12 @@ internal sealed class SqlExecutor(
 
         var server = token[..hashIndex];
         var instance = token[(hashIndex + 1)..];
+
+        // MSSQLSERVER is the default instance — connect with just the server name,
+        // not "Server\MSSQLSERVER" which would fail.
+        if (instance.Equals("MSSQLSERVER", StringComparison.OrdinalIgnoreCase))
+            return (server, null, server);
+
         return (server, instance, $@"{server}\{instance}");
     }
 

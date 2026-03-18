@@ -147,25 +147,26 @@ internal sealed class ScriptValidationService(
         if (string.IsNullOrWhiteSpace(script))
             return ScriptValidationResult.SyntaxError("Script is empty.");
 
+        // Write the validation script to a temp file to avoid command-line length limits.
+        // Windows has a ~32K char limit; large diagnostic scripts exceed it when Base64-encoded.
+        var tempFile = Path.Combine(Path.GetTempPath(), $"databot_validate_{Guid.NewGuid():N}.ps1");
         try
         {
-            // Validate by parsing locally: [ScriptBlock]::Create($script) | Out-Null
-            // This catches all parser errors without executing anything.
+            // The temp script parses the target script without executing it.
             var validationScript = $"[ScriptBlock]::Create(@'\n{script}\n'@) | Out-Null";
-            var encoded = Convert.ToBase64String(Encoding.Unicode.GetBytes(validationScript));
+            await File.WriteAllTextAsync(tempFile, validationScript, Encoding.UTF8, ct);
 
-            var psExe = string.IsNullOrWhiteSpace(_options.PowerShellExecutable)
-                ? "powershell"
-                : _options.PowerShellExecutable;
+            var psExe = ResolvePowerShellExecutable();
 
             var psi = new ProcessStartInfo
             {
                 FileName = psExe,
-                Arguments = $"-NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand {encoded}",
+                Arguments = $"-NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"{tempFile}\"",
                 UseShellExecute = false,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
-                CreateNoWindow = true
+                CreateNoWindow = true,
+                WorkingDirectory = Path.GetTempPath()
             };
 
             using var process = new Process { StartInfo = psi };
@@ -203,6 +204,10 @@ internal sealed class ScriptValidationService(
         {
             _logger.LogWarning(ex, "PowerShell validation process error.");
             return ScriptValidationResult.SyntaxError($"Validation process error: {ex.Message}");
+        }
+        finally
+        {
+            try { File.Delete(tempFile); } catch { /* best-effort cleanup */ }
         }
     }
 
@@ -264,6 +269,37 @@ internal sealed class ScriptValidationService(
                 $"Number={error.Number}; State={error.State}; Line={error.LineNumber}; Message={error.Message}");
         }
         return string.Join(Environment.NewLine, parts);
+    }
+
+    /// <summary>
+    /// Resolves the PowerShell executable: configured value → powershell → pwsh.
+    /// </summary>
+    private string ResolvePowerShellExecutable()
+    {
+        if (!string.IsNullOrWhiteSpace(_options.PowerShellExecutable))
+            return _options.PowerShellExecutable;
+
+        // Try powershell.exe first (Windows PowerShell 5.1), fall back to pwsh (PowerShell 7+)
+        try
+        {
+            var test = new ProcessStartInfo("powershell", "-NoProfile -Command exit 0")
+            {
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true,
+                WorkingDirectory = Path.GetTempPath()
+            };
+            using var p = Process.Start(test);
+            p?.WaitForExit(3000);
+            p?.Kill(true);
+            return "powershell";
+        }
+        catch
+        {
+            _logger.LogInformation("powershell.exe not available, falling back to pwsh.");
+            return "pwsh";
+        }
     }
 
     private static string StripCliXmlNoise(string stderr)

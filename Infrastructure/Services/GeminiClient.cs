@@ -29,9 +29,11 @@ public sealed class GeminiClient(
         string environmentTag,
         string routedQueryCode,
         string modelKey,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? apiKey = null)
     {
-        if (string.IsNullOrWhiteSpace(_llmOptions.Gemini.ApiKey))
+        var effectiveKey = ResolveApiKey(apiKey);
+        if (string.IsNullOrWhiteSpace(effectiveKey))
         {
             _logger.LogWarning(
                 "Gemini API key is not configured. Using deterministic tuning mock for model {ModelKey}.",
@@ -44,7 +46,7 @@ public sealed class GeminiClient(
         {
             _logger.LogInformation("Using Gemini tuning model {ModelKey}.", modelKey);
 
-            var kernel = _kernelFactory.CreateGeminiKernel(modelKey);
+            var kernel = _kernelFactory.CreateGeminiKernel(modelKey, effectiveKey);
             var args = new KernelArguments
             {
                 ["rawUserQuestion"] = rawQuestion,
@@ -73,9 +75,11 @@ public sealed class GeminiClient(
         string tunedQuestion,
         string environmentTag,
         string modelKey,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? apiKey = null)
     {
-        if (string.IsNullOrWhiteSpace(_llmOptions.Gemini.ApiKey))
+        var effectiveKey = ResolveApiKey(apiKey);
+        if (string.IsNullOrWhiteSpace(effectiveKey))
         {
             _logger.LogWarning(
                 "Gemini API key is not configured. Using deterministic generate mock for model {ModelKey}.",
@@ -88,7 +92,7 @@ public sealed class GeminiClient(
         {
             _logger.LogInformation("Using Gemini generate model {ModelKey}.", modelKey);
 
-            var kernel = _kernelFactory.CreateGeminiKernel(modelKey);
+            var kernel = _kernelFactory.CreateGeminiKernel(modelKey, effectiveKey);
             var args = new KernelArguments
             {
                 ["task"] = tunedQuestion,
@@ -116,9 +120,11 @@ public sealed class GeminiClient(
         string tunedQuestion,
         string environmentTag,
         string modelKey,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? apiKey = null)
     {
-        if (string.IsNullOrWhiteSpace(_llmOptions.Gemini.ApiKey))
+        var effectiveKey = ResolveApiKey(apiKey);
+        if (string.IsNullOrWhiteSpace(effectiveKey))
         {
             _logger.LogWarning(
                 "Gemini API key is not configured. Using deterministic template-validate mock for model {ModelKey}.",
@@ -131,7 +137,7 @@ public sealed class GeminiClient(
         {
             _logger.LogInformation("Using Gemini validate model {ModelKey}.", modelKey);
 
-            var kernel = _kernelFactory.CreateGeminiKernel(modelKey);
+            var kernel = _kernelFactory.CreateGeminiKernel(modelKey, effectiveKey);
             var args = new KernelArguments
             {
                 ["task"] = tunedQuestion,
@@ -154,4 +160,7 @@ public sealed class GeminiClient(
         }
     }
 
+    /// <summary>Prefer DB key, fall back to appsettings.</summary>
+    private string? ResolveApiKey(string? dbKey) =>
+        !string.IsNullOrWhiteSpace(dbKey) ? dbKey : _llmOptions.Gemini.ApiKey;
 }

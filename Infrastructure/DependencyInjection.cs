@@ -49,9 +49,14 @@ public static class DependencyInjection
         builder.Services.AddScoped<IScriptRepairService, ScriptRepairService>();
         builder.Services.AddScoped<ISqlExecutor, SqlExecutor>();
         builder.Services.AddScoped<IPowerShellExecutor, PowerShellExecutor>();
-        builder.Services.AddSingleton<IModelSelector, HardcodedModelSelector>();
+        builder.Services.AddSingleton<ILlmModelRepository, LlmModelSqlRepository>();
+        builder.Services.AddSingleton<IModelSelector, DatabaseModelSelector>();
         builder.Services.AddScoped<IToolRegistrySqlRepository, ToolRegistrySqlRepository>();
         builder.Services.AddScoped<IToolRegistryResolver, ToolRegistryResolver>();
+        builder.Services.AddScoped<IQuestionSamplesRepository, QuestionSamplesSqlRepository>();
+        builder.Services.AddScoped<IUserServerRepository, UserServerSqlRepository>();
+        builder.Services.AddScoped<IQuestionSamplesService, QuestionSamplesService>();
+        builder.Services.AddMemoryCache();
         builder.Services.AddSingleton<ITemplateRenderer, TemplateRenderer>();
         builder.Services.AddSingleton<ILLMClient, GeminiClient>();
         builder.Services.AddSingleton<ILLMClient, OpenAiClient>();
@@ -61,5 +66,6 @@ public static class DependencyInjection
         builder.Services.AddSingleton<KernelFactory>();
         builder.Services.AddSingleton<SkPromptRunner>();
         builder.Services.AddSingleton<IQueryCodeRouterService, QueryCodeRouterService>();
+        builder.Services.AddScoped<IHeartbeatService, HeartbeatService>();
     }
 }

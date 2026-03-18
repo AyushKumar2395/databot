@@ -7,8 +7,16 @@ internal sealed partial class ScriptSafetyScanner
     private static readonly string[] SqlBlockedProcedureTokens =
     [
         "xp_cmdshell",
+        "xp_regread",
+        "xp_regwrite",
+        "xp_regdelete",
+        "xp_servicecontrol",
         "sp_configure",
         "sp_OACreate",
+        "sp_OAMethod",
+        "sp_executesql",     // dynamic SQL — LLM should generate direct queries
+        "sp_MSForEachTable",
+        "sp_MSForEachDB",
         "OPENROWSET",
         "OPENDATASOURCE",
         "sp_add_job",
@@ -62,7 +70,8 @@ internal sealed partial class ScriptSafetyScanner
 
         if (EnvironmentRules.IsSqlServer(environment) || string.Equals(scriptLanguage, "SQL", StringComparison.OrdinalIgnoreCase))
         {
-            if (TryFindBlockedSqlToken(sanitized, out var blockedSqlToken))
+            var commentFree = StripSqlComments(sanitized);
+            if (TryFindBlockedSqlToken(commentFree, out var blockedSqlToken))
             {
                 return new SafetyScanResult
                 {
@@ -73,7 +82,7 @@ internal sealed partial class ScriptSafetyScanner
             }
 
             // Reject SQL-specific dangerous procedures: BULK INSERT, OLE automation, CLR
-            if (TryFindBlockedSqlAdvancedToken(sanitized, out var advToken))
+            if (TryFindBlockedSqlAdvancedToken(commentFree, out var advToken))
             {
                 return new SafetyScanResult
                 {
@@ -131,6 +140,7 @@ internal sealed partial class ScriptSafetyScanner
 
     private static bool TryFindBlockedSqlToken(string script, out string blockedToken)
     {
+        // 1. Blanket-blocked statements (no safe variant)
         var blockedStatement = SqlBlockedStatementRegex().Match(script);
         if (blockedStatement.Success)
         {
@@ -138,6 +148,39 @@ internal sealed partial class ScriptSafetyScanner
             return true;
         }
 
+        // 2. INSERT — allow @tableVar / #temp, block real tables
+        if (SqlBlockedInsertIntoRealTableRegex().IsMatch(script) ||
+            SqlBlockedInsertDirectRealTableRegex().IsMatch(script))
+        {
+            blockedToken = "INSERT_INTO_TABLE";
+            return true;
+        }
+
+        // 3. DROP — allow DROP TABLE #temp, block everything else
+        if (SqlAnyDropRegex().IsMatch(script) &&
+            !AllOccurrencesMatch(script, SqlAnyDropRegex(), SqlAllowedDropTempTableRegex()))
+        {
+            blockedToken = "DROP";
+            return true;
+        }
+
+        // 4. CREATE — allow CREATE TABLE #temp and CREATE INDEX ON #temp, block rest
+        if (SqlAnyCreateRegex().IsMatch(script) &&
+            !AllOccurrencesMatch(script, SqlAnyCreateRegex(), SqlAllowedCreateTempTableRegex(), SqlAllowedCreateIndexOnTempRegex()))
+        {
+            blockedToken = "CREATE";
+            return true;
+        }
+
+        // 5. ALTER — allow ALTER INDEX ON #temp, block rest (ALTER EVENT SESSION handled below)
+        if (SqlAnyAlterRegex().IsMatch(script) &&
+            !AllOccurrencesMatch(script, SqlAnyAlterRegex(), SqlAllowedAlterIndexOnTempRegex()))
+        {
+            blockedToken = "ALTER";
+            return true;
+        }
+
+        // 6. Blocked procedure tokens
         foreach (var token in SqlBlockedProcedureTokens)
         {
             if (!Regex.IsMatch(script, $@"\b{Regex.Escape(token)}\b", RegexOptions.IgnoreCase))
@@ -147,17 +190,35 @@ internal sealed partial class ScriptSafetyScanner
             return true;
         }
 
-        if (Regex.IsMatch(
-                script,
-                @"\bALTER\s+EVENT\s+SESSION\b[\s\S]*?\bSTATE\s*=\s*(START|STOP)\b",
-                RegexOptions.IgnoreCase))
-        {
-            blockedToken = "ALTER EVENT SESSION STATE";
-            return true;
-        }
-
         blockedToken = string.Empty;
         return false;
+    }
+
+    /// <summary>
+    /// Returns true when every occurrence of <paramref name="anyRegex"/> in <paramref name="script"/>
+    /// is covered by at least one of the <paramref name="allowedPatterns"/>.
+    /// Used to ensure all DROP/CREATE/ALTER usages target safe objects (#temp).
+    /// </summary>
+    private static bool AllOccurrencesMatch(string script, Regex anyRegex, params Regex[] allowedPatterns)
+    {
+        foreach (Match hit in anyRegex.Matches(script))
+        {
+            // Check the substring starting at this match position
+            var remaining = script[hit.Index..];
+            var covered = false;
+            foreach (var allowed in allowedPatterns)
+            {
+                var m = allowed.Match(remaining);
+                if (m.Success && m.Index == 0)
+                {
+                    covered = true;
+                    break;
+                }
+            }
+            if (!covered)
+                return false;
+        }
+        return true;
     }
 
     private static bool TryFindBlockedWindowsToken(string script, out string blockedToken)
@@ -187,6 +248,16 @@ internal sealed partial class ScriptSafetyScanner
         return false;
     }
 
+    /// <summary>Removes SQL single-line (--) and block (/* */) comments so tokens inside comments don't trigger false blocks.</summary>
+    internal static string StripSqlComments(string script)
+    {
+        // Remove block comments (non-greedy, handles nested by repeated pass)
+        var result = Regex.Replace(script, @"/\*.*?\*/", " ", RegexOptions.Singleline);
+        // Remove single-line comments
+        result = Regex.Replace(result, @"--[^\r\n]*", " ");
+        return result;
+    }
+
     private static string StripCodeFences(string script)
     {
         var text = (script ?? string.Empty).Trim();
@@ -198,8 +269,40 @@ internal sealed partial class ScriptSafetyScanner
         return text.Trim();
     }
 
-    [GeneratedRegex(@"(?im)^\s*(?<stmt>INSERT|UPDATE|DELETE|MERGE|TRUNCATE|DROP|ALTER|CREATE|GRANT|REVOKE|DENY|KILL|RECONFIGURE|BACKUP|RESTORE)\b")]
+    // ── Blanket-blocked statements (no safe variant exists) ────────────────
+    [GeneratedRegex(@"(?im)^\s*(?<stmt>UPDATE|DELETE|MERGE|TRUNCATE|GRANT|REVOKE|DENY|KILL|RECONFIGURE|BACKUP|RESTORE)\b")]
     private static partial Regex SqlBlockedStatementRegex();
+
+    // ── INSERT: allow @tableVar / #temp, block real tables ───────────────
+    [GeneratedRegex(@"(?im)^\s*INSERT\s+INTO\s+(?![@#])\w")]
+    private static partial Regex SqlBlockedInsertIntoRealTableRegex();
+
+    [GeneratedRegex(@"(?im)^\s*INSERT\s+(?!INTO\b)(?![@#])\w")]
+    private static partial Regex SqlBlockedInsertDirectRealTableRegex();
+
+    // ── DROP: allow DROP TABLE #temp, block everything else ──────────────
+    [GeneratedRegex(@"(?im)\bDROP\s+TABLE\s+(IF\s+EXISTS\s+)?#\w", RegexOptions.None)]
+    private static partial Regex SqlAllowedDropTempTableRegex();
+
+    [GeneratedRegex(@"(?im)\bDROP\b")]
+    private static partial Regex SqlAnyDropRegex();
+
+    // ── CREATE: allow CREATE TABLE #temp, block everything else ──────────
+    [GeneratedRegex(@"(?im)\bCREATE\s+TABLE\s+#\w")]
+    private static partial Regex SqlAllowedCreateTempTableRegex();
+
+    [GeneratedRegex(@"(?im)\bCREATE\s+(UNIQUE\s+)?(NONCLUSTERED\s+|CLUSTERED\s+)?INDEX\b[^;]*\bON\s+#\w", RegexOptions.Singleline)]
+    private static partial Regex SqlAllowedCreateIndexOnTempRegex();
+
+    [GeneratedRegex(@"(?im)\bCREATE\b")]
+    private static partial Regex SqlAnyCreateRegex();
+
+    // ── ALTER: allow ALTER INDEX ... ON #temp, block everything else ─────
+    [GeneratedRegex(@"(?im)\bALTER\s+INDEX\b[^;]*\bON\s+#\w", RegexOptions.Singleline)]
+    private static partial Regex SqlAllowedAlterIndexOnTempRegex();
+
+    [GeneratedRegex(@"(?im)\bALTER\b")]
+    private static partial Regex SqlAnyAlterRegex();
 
     [GeneratedRegex(@"(?im)^\s*(?<cmd>Restart-Computer|Stop-Computer|shutdown|Stop-Service|Start-Service|Restart-Service|Stop-Process|taskkill|Set-ItemProperty|New-ItemProperty|Remove-Item|Format-Volume|Clear-EventLog|Disable-NetAdapter|New-NetFirewallRule|Set-NetFirewallRule|Remove-NetFirewallRule)\b")]
     private static partial Regex WindowsBlockedCommandRegex();

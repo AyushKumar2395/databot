@@ -13,8 +13,9 @@ internal static class EnvironmentIntentService
         "sql server", "tsql", "t-sql", "sys.", "dm_", "msdb", "tempdb",
         "agent job", "sql agent", "availability group", "always on",
         "database", "table", "index", "stored procedure", "sp_",
-        "serverproperty", "errorlog", "xp_readerrorlog", "backupset",
-        "restore", "blocking", "deadlock", "wait stats", "backup"
+        "serverproperty", "errorlog", "error log", "xp_readerrorlog", "backupset",
+        "restore", "blocking", "deadlock", "wait stats", "backup",
+        "login", "logins", "sysadmin", "securityadmin", "server role"
     ];
 
     // ── Windows strong indicators (weight +3 each) ──────────────────────────
@@ -36,6 +37,39 @@ internal static class EnvironmentIntentService
     [
         "server", "service", "restart", "log", "error",
         "status", "health", "startup", "down"
+    ];
+
+    // ── Broad SQL relevance keywords (not strong enough for mismatch scoring,
+    //    but enough to prove the question is in the SQL domain) ───────────────
+    private static readonly string[] SqlRelevanceKeywords =
+    [
+        "sql", "database", "databases", "table", "tables", "index", "indexes",
+        "query", "queries", "stored procedure", "agent", "job", "jobs",
+        "deadlock", "blocking", "wait", "backup", "restore", "instance",
+        "dmv", "sys.", "tempdb", "msdb", "sp_", "dm_", "errorlog",
+        "replication", "always on", "availability", "mirroring", "log shipping",
+        "transaction", "lock", "performance", "execution plan", "statistics",
+        "select", "insert", "update", "delete", "create", "drop", "alter",
+        "truncate", "merge", "grant", "revoke", "deny", "kill", "dbcc",
+        "schema", "view", "trigger", "function", "cursor", "column", "row",
+        "login", "logins", "user", "role", "permission", "principal", "credential",
+        "version", "patch", "cumulative update", "service pack", "build", "edition",
+        "configuration", "setting", "option", "trace flag", "compatibility", "collation",
+        "size", "space", "growth", "shrink", "file", "filegroup", "extent", "page"
+    ];
+
+    // ── Broad Windows relevance keywords ─────────────────────────────────────
+    private static readonly string[] WindowsRelevanceKeywords =
+    [
+        "windows", "disk", "drives", "drive", "cpu", "memory", "ram",
+        "process", "processes", "service", "services", "event log",
+        "firewall", "port", "ports", "iis", "cluster", "patch", "hotfix",
+        "reboot", "uptime", "ping", "task", "registry", "dns", "rdp",
+        "network", "adapter", "volume", "partition", "scheduled task",
+        "powershell", "wmi", "cim", "winrm", "certificate", "ssl", "tls",
+        "restart-", "stop-", "start-", "get-", "set-", "new-", "remove-",
+        "invoke-", "enable-", "disable-", "install-", "uninstall-",
+        "netstat", "ipconfig", "taskkill", "shutdown", "nslookup"
     ];
 
     private const int StrongWeight = 3;
@@ -60,6 +94,50 @@ internal static class EnvironmentIntentService
             && (normalized.Contains("from disk") || normalized.Contains("to disk")))
         {
             winScore -= StrongWeight;
+        }
+
+        // "Windows login", "Windows group", "Windows authentication", "Windows user" are SQL Server
+        // concepts (AD-integrated auth), not Windows OS requests.
+        if (winScore > 0 && normalized.Contains("windows")
+            && (normalized.Contains("login") || normalized.Contains("group login")
+                || normalized.Contains("authentication") || normalized.Contains("windows user")
+                || normalized.Contains("windows account") || normalized.Contains("ad login")
+                || normalized.Contains("ad group") || normalized.Contains("active directory")))
+        {
+            winScore -= StrongWeight;
+            sqlScore += StrongWeight; // boost SQL relevance
+        }
+
+        // ── Rule 0: NO RELEVANCE — question has nothing to do with the env ──
+        // Check if the question contains ANY keyword relevant to the selected environment.
+        // If not, block early — don't waste LLM calls on irrelevant questions.
+        var isSqlEnv = EnvironmentRules.IsSqlServer(envTag);
+        var relevanceKeywords = isSqlEnv ? SqlRelevanceKeywords : WindowsRelevanceKeywords;
+        var hasRelevance = relevanceKeywords.Any(kw =>
+            normalized.Contains(kw, StringComparison.OrdinalIgnoreCase));
+
+        // Also count ambiguous terms as partial relevance (e.g. "server", "status", "health")
+        if (!hasRelevance && sqlScore == 0 && winScore == 0 && ambiguousScore < AmbiguousClarificationThreshold)
+        {
+            var expectedType = isSqlEnv ? "SQL Server" : "Windows";
+            var alternatives = isSqlEnv
+                ? new[]
+                {
+                    "Show failed SQL Agent jobs",
+                    "Check database backup history",
+                    "List databases larger than 10 GB"
+                }
+                : new[]
+                {
+                    "Check disk space on all drives",
+                    "List stopped Windows services",
+                    "When was the server last rebooted?"
+                };
+
+            return EnvironmentIntentResult.Mismatch(
+                $"Your question doesn't appear to be related to {expectedType}. Please ask a {expectedType} diagnostic or inventory question, or switch to the General environment.",
+                envTag,
+                alternatives);
         }
 
         // ── Rule 1: CLEAR mismatch ──────────────────────────────────────────

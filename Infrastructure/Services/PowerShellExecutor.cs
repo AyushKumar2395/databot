@@ -17,21 +17,21 @@ internal sealed class PowerShellExecutor(
     public async Task<ExecutorRunResult> ExecuteAsync(string server, string script, CancellationToken cancellationToken)
     {
         var stopwatch = Stopwatch.StartNew();
+        var tempFile = Path.Combine(Path.GetTempPath(), $"databot_exec_{Guid.NewGuid():N}.ps1");
         try
         {
             var wrapper = BuildRemoteExecutionScript(server, script);
-            var encoded = Convert.ToBase64String(Encoding.Unicode.GetBytes(wrapper));
+            await File.WriteAllTextAsync(tempFile, wrapper, Encoding.UTF8, cancellationToken);
 
             var psi = new ProcessStartInfo
             {
-                FileName = string.IsNullOrWhiteSpace(_options.PowerShellExecutable)
-                    ? "powershell"
-                    : _options.PowerShellExecutable,
-                Arguments = $"-NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand {encoded}",
+                FileName = ResolvePowerShellExecutable(),
+                Arguments = $"-NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"{tempFile}\"",
                 UseShellExecute = false,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
-                CreateNoWindow = true
+                CreateNoWindow = true,
+                WorkingDirectory = Path.GetTempPath()
             };
 
             using var process = new Process { StartInfo = psi };
@@ -105,6 +105,10 @@ internal sealed class PowerShellExecutor(
                 DurationMs = stopwatch.ElapsedMilliseconds,
                 Rows = []
             };
+        }
+        finally
+        {
+            try { File.Delete(tempFile); } catch { /* best-effort cleanup */ }
         }
     }
 
@@ -272,6 +276,36 @@ internal sealed class PowerShellExecutor(
         if (!string.IsNullOrWhiteSpace(stdout))
             details.Add(stdout.Trim());
         return string.Join(Environment.NewLine, details);
+    }
+
+    /// <summary>
+    /// Resolves the PowerShell executable: configured value → powershell → pwsh.
+    /// </summary>
+    private string ResolvePowerShellExecutable()
+    {
+        if (!string.IsNullOrWhiteSpace(_options.PowerShellExecutable))
+            return _options.PowerShellExecutable;
+
+        try
+        {
+            var test = new ProcessStartInfo("powershell", "-NoProfile -Command exit 0")
+            {
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true,
+                WorkingDirectory = Path.GetTempPath()
+            };
+            using var p = Process.Start(test);
+            p?.WaitForExit(3000);
+            p?.Kill(true);
+            return "powershell";
+        }
+        catch
+        {
+            _logger.LogInformation("powershell.exe not available, falling back to pwsh.");
+            return "pwsh";
+        }
     }
 
     private static bool IsRetryableCompileError(string errorText)

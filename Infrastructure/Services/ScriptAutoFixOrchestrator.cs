@@ -76,50 +76,61 @@ internal sealed class ScriptAutoFixOrchestrator(
             return response;
         }
 
-        var firstTarget = request.SelectedServers[0];
         var candidateScript = request.GeneratedScript;
         var repairsUsed = 0;
         var isSql = EnvironmentRules.IsSqlServer(request.Environment)
                     || string.Equals(request.ScriptLanguage, "SQL", StringComparison.OrdinalIgnoreCase);
+
+        // ── Pick a validation target ─────────────────────────────────────────────
+        // Try each server in order until one is reachable for compile-check.
+        // Servers that fail with CONNECTION errors are recorded as failed and skipped.
+        var validationTarget = request.SelectedServers[0];
+        var connectionFailedServers = new List<string>();
 
         // ── VALIDATE / REPAIR LOOP ──────────────────────────────────────────────
         while (true)
         {
             var attemptNumber = response.Attempts.Count + 1;
 
-            // Safety scan
-            var scan = _safetyScanner.Scan(request.Environment, request.ScriptLanguage, candidateScript);
-            if (!scan.IsSafe)
+            // Safety scan — skip for curated sample scripts fetched from DB
+            if (!request.SkipSafetyScanning)
             {
-                response.Attempts.Add(BuildAttempt(
-                    attemptNumber, scan.SanitizedScript, firstTarget,
-                    phase: "VALIDATE", status: "BLOCKED",
-                    errorType: null,
-                    error: $"BLOCKED:DANGEROUS_COMMAND:{scan.BlockedToken}",
-                    repairedByLlm: repairsUsed > 0));
-                response.FinalScript = null;
-                response.ResultsByServer.Add(new ScriptExecutionServerResult
+                var scan = _safetyScanner.Scan(request.Environment, request.ScriptLanguage, candidateScript);
+                if (!scan.IsSafe)
                 {
-                    Server = firstTarget,
-                    Status = "FAILED",
-                    RowCount = 0,
-                    Error = $"BLOCKED:DANGEROUS_COMMAND:{scan.BlockedToken}",
-                    DurationMs = 0
-                });
-                FinalizeSummary(response, request.SelectedServers.Length);
-                return response;
+                    response.Attempts.Add(BuildAttempt(
+                        attemptNumber, scan.SanitizedScript, validationTarget,
+                        phase: "VALIDATE", status: "BLOCKED",
+                        errorType: null,
+                        error: $"BLOCKED:DANGEROUS_COMMAND:{scan.BlockedToken}",
+                        repairedByLlm: repairsUsed > 0));
+                    response.FinalScript = null;
+                    response.ResultsByServer.Add(new ScriptExecutionServerResult
+                    {
+                        Server = validationTarget,
+                        Status = "FAILED",
+                        RowCount = 0,
+                        Error = $"BLOCKED:DANGEROUS_COMMAND:{scan.BlockedToken}",
+                        DurationMs = 0
+                    });
+                    FinalizeSummary(response, request.SelectedServers.Length);
+                    return response;
+                }
+
+                candidateScript = scan.SanitizedScript;
             }
 
-            candidateScript = scan.SanitizedScript;
-
-            // Compile/parse validation
+            // Compile/parse validation — try servers until one connects
             await prog.EmitAsync(ProgressEvent.PhaseStart("VALIDATE", $"Attempt {attemptNumber}"), cancellationToken);
 
             ScriptValidationResult validationResult;
             if (isSql)
             {
-                validationResult = await _validationService.ValidateSqlAsync(
-                    candidateScript, firstTarget, cancellationToken);
+                var (result, server) = await TryValidateSqlWithFallbackAsync(
+                    candidateScript, request.SelectedServers, connectionFailedServers,
+                    response, cancellationToken);
+                validationResult = result;
+                validationTarget = server;
             }
             else
             {
@@ -134,7 +145,7 @@ internal sealed class ScriptAutoFixOrchestrator(
             {
                 // Validation passed — record success attempt and proceed to execution
                 response.Attempts.Add(BuildAttempt(
-                    attemptNumber, candidateScript, firstTarget,
+                    attemptNumber, candidateScript, validationTarget,
                     phase: "VALIDATE",
                     status: "SUCCESS",
                     errorType: null,
@@ -144,46 +155,37 @@ internal sealed class ScriptAutoFixOrchestrator(
                 break;
             }
 
-            // CONNECTION error: not a syntax problem — skip repair, proceed to execution with best script
+            // All servers had CONNECTION errors — no server could validate
             if (string.Equals(validationResult.ErrorType, "CONNECTION", StringComparison.OrdinalIgnoreCase))
             {
                 _logger.LogWarning(
-                    "Validation connection error on target {Target}; skipping repair. Error={Error}",
-                    firstTarget, validationResult.ErrorMessage);
+                    "All {Count} servers unreachable for validation. Skipping compile-check.",
+                    request.SelectedServers.Length);
 
                 response.Attempts.Add(BuildAttempt(
-                    attemptNumber, candidateScript, firstTarget,
+                    attemptNumber, candidateScript, validationTarget,
                     phase: "VALIDATE",
                     status: "FAILED",
                     errorType: "CONNECTION",
-                    error: validationResult.ErrorMessage,
+                    error: "All servers unreachable for validation: " + validationResult.ErrorMessage,
                     repairedByLlm: repairsUsed > 0));
 
-                // Cannot validate, but script might work on other targets.
-                // Record first target as failed and proceed with remaining targets.
+                // No server could validate — proceed to execution and let each server report its own result
                 response.FinalScript = candidateScript;
-                response.ResultsByServer.Add(new ScriptExecutionServerResult
-                {
-                    Server = firstTarget,
-                    Status = "FAILED",
-                    RowCount = 0,
-                    Error = validationResult.ErrorMessage,
-                    DurationMs = 0
-                });
                 break;
             }
 
             // SYNTAX error — record the failed attempt
             response.Attempts.Add(BuildAttempt(
-                attemptNumber, candidateScript, firstTarget,
+                attemptNumber, candidateScript, validationTarget,
                 phase: "VALIDATE",
                 status: "FAILED",
                 errorType: "SYNTAX",
                 error: validationResult.ErrorMessage,
                 repairedByLlm: repairsUsed > 0));
 
-            // Attempt LLM repair if budget remains
-            if (repairsUsed < MaxRepairs)
+            // Attempt LLM repair if budget remains and repair is allowed
+            if (request.AllowRepair && repairsUsed < MaxRepairs)
             {
                 repairsUsed++;
                 _logger.LogInformation(
@@ -210,7 +212,7 @@ internal sealed class ScriptAutoFixOrchestrator(
             response.FinalScript = null;
             response.ResultsByServer.Add(new ScriptExecutionServerResult
             {
-                Server = firstTarget,
+                Server = validationTarget,
                 Status = "FAILED",
                 RowCount = 0,
                 Error = $"Compile validation failed after {repairsUsed} repair attempts: {validationResult.ErrorMessage}",
@@ -229,16 +231,14 @@ internal sealed class ScriptAutoFixOrchestrator(
 
         await prog.EmitAsync(ProgressEvent.PhaseStart("EXECUTE"), cancellationToken);
 
-        // Check if first target already has a result (e.g. connection error during validation)
-        var firstTargetHasResult = response.ResultsByServer.Any(
-            r => string.Equals(r.Server, firstTarget, StringComparison.OrdinalIgnoreCase));
-
+        // Execute on all servers — even those that had validation connection errors
+        // (the connection issue may have been transient)
         var allResults = await ExecuteAcrossTargetsAsync(
             request.Environment,
             request.ScriptLanguage,
             request.SelectedServers,
             response.FinalScript,
-            firstTargetHasResult ? firstTarget : null, // skip first target if already has result
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase),
             prog,
             cancellationToken);
 
@@ -263,7 +263,7 @@ internal sealed class ScriptAutoFixOrchestrator(
         string scriptLanguage,
         IReadOnlyList<string> targets,
         string script,
-        string? skipTarget,
+        IReadOnlySet<string> skipTargets,
         IProgressStream progress,
         CancellationToken cancellationToken)
     {
@@ -271,9 +271,9 @@ internal sealed class ScriptAutoFixOrchestrator(
         var maxDegree = _options.MaxDegreeOfParallelism <= 0 ? 5 : _options.MaxDegreeOfParallelism;
         using var gate = new SemaphoreSlim(maxDegree, maxDegree);
 
-        var targetsToRun = skipTarget is null
+        var targetsToRun = skipTargets.Count == 0
             ? targets
-            : targets.Where(t => !string.Equals(t, skipTarget, StringComparison.OrdinalIgnoreCase)).ToList();
+            : targets.Where(t => !skipTargets.Contains(t)).ToList();
 
         var tasks = targetsToRun.Select(async target =>
         {
@@ -316,6 +316,53 @@ internal sealed class ScriptAutoFixOrchestrator(
             return await _sqlExecutor.ExecuteAsync(target, script, cancellationToken);
 
         return await _powerShellExecutor.ExecuteAsync(target, script, cancellationToken);
+    }
+
+    /// <summary>
+    /// Tries to validate SQL on each server in order. If a server has a connection error,
+    /// records it as failed and moves to the next server. Returns a CONNECTION result only
+    /// when ALL servers are unreachable.
+    /// </summary>
+    private async Task<(ScriptValidationResult Result, string Server)> TryValidateSqlWithFallbackAsync(
+        string script,
+        IReadOnlyList<string> allServers,
+        List<string> connectionFailedServers,
+        ScriptExecutionResponse response,
+        CancellationToken cancellationToken)
+    {
+        // Build the list of servers still available for validation
+        var candidates = allServers
+            .Where(s => !connectionFailedServers.Contains(s, StringComparer.OrdinalIgnoreCase))
+            .ToList();
+
+        ScriptValidationResult? lastConnectionError = null;
+        var lastServer = candidates.FirstOrDefault() ?? allServers[0];
+
+        foreach (var server in candidates)
+        {
+            lastServer = server;
+            var result = await _validationService.ValidateSqlAsync(script, server, cancellationToken);
+
+            if (!string.Equals(result.ErrorType, "CONNECTION", StringComparison.OrdinalIgnoreCase))
+            {
+                // Either SUCCESS or SYNTAX — this server connected, return the result
+                return (result, server);
+            }
+
+            // Connection error on this server — skip it for validation and try the next one.
+            // Do NOT record as FAILED yet — execution may still succeed (transient issue).
+            _logger.LogWarning(
+                "Validation connection error on {Server}; trying next server. Error={Error}",
+                server, result.ErrorMessage);
+
+            connectionFailedServers.Add(server);
+            lastConnectionError = result;
+        }
+
+        // All servers failed with connection errors
+        var finalResult = lastConnectionError
+            ?? ScriptValidationResult.ConnectionError("No servers available for validation.");
+        return (finalResult, lastServer);
     }
 
     private ILLMClient ResolveClient(string provider)
@@ -375,21 +422,15 @@ internal sealed class ScriptAutoFixOrchestrator(
 
         if (!EnvironmentRules.IsSqlServer(request.Environment) && !EnvironmentRules.IsWindows(request.Environment))
         {
-            error = "environment must be SqlServer_Live or Windows_Live.";
+            error = "environment must be SqlServer or Windows (Live or History).";
             return false;
         }
 
-        if (EnvironmentRules.IsSqlServer(request.Environment) &&
-            !string.Equals(request.ScriptLanguage, "SQL", StringComparison.OrdinalIgnoreCase))
+        var expectedLanguage = EnvironmentRules.ResolveScriptLanguage(request.Environment);
+        if (expectedLanguage != null &&
+            !string.Equals(request.ScriptLanguage, expectedLanguage, StringComparison.OrdinalIgnoreCase))
         {
-            error = "scriptLanguage must be SQL for SqlServer_Live.";
-            return false;
-        }
-
-        if (EnvironmentRules.IsWindows(request.Environment) &&
-            !string.Equals(request.ScriptLanguage, "PS", StringComparison.OrdinalIgnoreCase))
-        {
-            error = "scriptLanguage must be PS for Windows_Live.";
+            error = $"scriptLanguage must be {expectedLanguage} for {request.Environment}.";
             return false;
         }
 

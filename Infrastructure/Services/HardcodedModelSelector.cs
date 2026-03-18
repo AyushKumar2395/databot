@@ -30,7 +30,7 @@ public sealed class HardcodedModelSelector(ILogger<HardcodedModelSelector> logge
         UseForTune = true,
         UseForTemplateFind = true,
         UseForValidate = true,
-        UseForGenerate = true,
+        UseForGenerate = false,
         UseForRepair = true,
             UseForExplain = true,
             RetryCount = null,
@@ -57,7 +57,7 @@ public sealed class HardcodedModelSelector(ILogger<HardcodedModelSelector> logge
             UseForRepair = false,
             UseForExplain = false,
             RetryCount = null,
-            Generator = 2
+            Generator = 1
         },
         new()
         {
@@ -76,7 +76,7 @@ public sealed class HardcodedModelSelector(ILogger<HardcodedModelSelector> logge
             UseForTune = false,
             UseForTemplateFind = false,
             UseForValidate = false,
-            UseForGenerate = false,
+            UseForGenerate = true,
             UseForRepair = false,
             UseForExplain = false,
             RetryCount = null,

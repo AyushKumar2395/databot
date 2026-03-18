@@ -29,9 +29,11 @@ public sealed class OpenAiClient(
         string environmentTag,
         string routedQueryCode,
         string modelKey,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? apiKey = null)
     {
-        if (string.IsNullOrWhiteSpace(_llmOptions.OpenAI.ApiKey))
+        var effectiveKey = ResolveApiKey(apiKey);
+        if (string.IsNullOrWhiteSpace(effectiveKey))
         {
             _logger.LogWarning(
                 "OpenAI API key is not configured. Using deterministic tuning mock for model {ModelKey}.",
@@ -46,7 +48,7 @@ public sealed class OpenAiClient(
                 "Using OpenAI tuning model {ModelKey}.",
                 modelKey);
 
-            var kernel = _kernelFactory.CreateOpenAiKernel(modelKey);
+            var kernel = _kernelFactory.CreateOpenAiKernel(modelKey, effectiveKey);
             var args = new KernelArguments
             {
                 ["rawUserQuestion"] = rawQuestion,
@@ -75,9 +77,11 @@ public sealed class OpenAiClient(
         string tunedQuestion,
         string environmentTag,
         string modelKey,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? apiKey = null)
     {
-        if (string.IsNullOrWhiteSpace(_llmOptions.OpenAI.ApiKey))
+        var effectiveKey = ResolveApiKey(apiKey);
+        if (string.IsNullOrWhiteSpace(effectiveKey))
         {
             _logger.LogWarning(
                 "OpenAI API key is not configured. Using deterministic generate mock for model {ModelKey}.",
@@ -92,7 +96,7 @@ public sealed class OpenAiClient(
                 "Using OpenAI generate model {ModelKey}.",
                 modelKey);
 
-            var kernel = _kernelFactory.CreateOpenAiKernel(modelKey);
+            var kernel = _kernelFactory.CreateOpenAiKernel(modelKey, effectiveKey);
             var args = new KernelArguments
             {
                 ["task"] = tunedQuestion,
@@ -120,9 +124,11 @@ public sealed class OpenAiClient(
         string tunedQuestion,
         string environmentTag,
         string modelKey,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? apiKey = null)
     {
-        if (string.IsNullOrWhiteSpace(_llmOptions.OpenAI.ApiKey))
+        var effectiveKey = ResolveApiKey(apiKey);
+        if (string.IsNullOrWhiteSpace(effectiveKey))
         {
             _logger.LogWarning(
                 "OpenAI API key is not configured. Using deterministic template-validate mock for model {ModelKey}.",
@@ -137,7 +143,7 @@ public sealed class OpenAiClient(
                 "Using OpenAI validate model {ModelKey}.",
                 modelKey);
 
-            var kernel = _kernelFactory.CreateOpenAiKernel(modelKey);
+            var kernel = _kernelFactory.CreateOpenAiKernel(modelKey, effectiveKey);
             var args = new KernelArguments
             {
                 ["task"] = tunedQuestion,
@@ -160,4 +166,7 @@ public sealed class OpenAiClient(
         }
     }
 
+    /// <summary>Prefer DB key, fall back to appsettings.</summary>
+    private string? ResolveApiKey(string? dbKey) =>
+        !string.IsNullOrWhiteSpace(dbKey) ? dbKey : _llmOptions.OpenAI.ApiKey;
 }

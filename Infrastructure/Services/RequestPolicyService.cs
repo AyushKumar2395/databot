@@ -16,7 +16,7 @@ internal sealed class RequestPolicyService(
 
     // ── SQL dangerous action verbs (state-changing) ─────────────────────────
     private static readonly Regex SqlDangerousActionPattern = new(
-        @"\b(backup\s+database|restore\s+database|backup\s+log|restore\s+log|drop\s+(database|table|index|view|procedure|proc|login|user|schema|role|function|trigger)|truncate\s+table|alter\s+(database|table|login|user|schema|role)|create\s+(database|login|user|schema|role)|insert\s+into|update\s+\S+\s+set\b|delete\s+from|merge\s+into|grant\s+\S+\s+to|revoke\s+\S+\s+from|deny\s+\S+\s+to|kill\s+\d+|reconfigure|shrink\s*database|dbcc\s+shrink|sp_configure|xp_cmdshell|sp_OACreate|sp_(add|update|delete)_(job|jobstep|jobschedule))\b",
+        @"\b(backup\s+database|restore\s+database|backup\s+log|restore\s+log|drop\s+(database|table|index|view|procedure|proc|login|user|schema|role|function|trigger)|truncate\s+table|alter\s+(database|table|login|user|schema|role)|create\s+(database|login|user|schema|role)|insert\s+into|update\s+\S+\s+set\b|delete\s+from|merge\s+into|grant\s+\S+\s+to|revoke\s+\S+\s+from|deny\s+\S+\s+to|kill\s+\d+|reconfigure|shrink\s*database|dbcc\s+shrink|xp_cmdshell|sp_OACreate|sp_(add|update|delete)_(job|jobstep|jobschedule))\b",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     // ── Windows dangerous action verbs (state-changing) ─────────────────────
@@ -56,7 +56,8 @@ internal sealed class RequestPolicyService(
         }
 
         // ── Step 2: Environment Intent Gate (Windows vs SQL) ────────────────
-        if (EnvironmentRules.IsSqlServer(env) || EnvironmentRules.IsWindows(env))
+        // History environments run centralized T-SQL on CTS03 — skip Live-mode intent checking.
+        if (EnvironmentRules.IsLive(env))
         {
             var intentResult = EnvironmentIntentService.Evaluate(raw, env);
 
@@ -103,7 +104,8 @@ internal sealed class RequestPolicyService(
 
     private static PolicyDecision? CheckDangerousAction(string raw, string tuned, string env)
     {
-        var isSql = EnvironmentRules.IsSqlServer(env);
+        // History environments always generate T-SQL, so check SQL patterns even for Windows_History.
+        var isSql = EnvironmentRules.IsSqlServer(env) || EnvironmentRules.IsHistory(env);
 
         var hasDangerInRaw = isSql
             ? SqlDangerousActionPattern.IsMatch(raw)
